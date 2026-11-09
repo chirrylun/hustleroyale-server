@@ -22,6 +22,16 @@ export interface SkillEffect {
   stat?: ModStat;
   pct?: number;
   duration_ms?: number;
+  /** Ground attack: the danger zone shows for this long before it lands. Walk out in time and it misses. */
+  telegraph_ms?: number;
+  /** Radius of that danger zone, in arena units. */
+  radius?: number;
+  /** Stops the target moving and acting, and interrupts a wind-up. */
+  stun_ms?: number;
+  /** Shoves the target this far away from the attacker. */
+  knockback?: number;
+  /** Yanks the target toward the attacker. */
+  pull?: number;
 }
 
 export interface SkillDef {
@@ -64,9 +74,38 @@ export interface Modifier {
   untilMs: number;
 }
 
+/** A telegraphed attack that is charging up. Its circle is the danger zone everyone can see. */
+export interface Windup {
+  id: number;
+  skillIndex: number;
+  x: number;
+  y: number;
+  radius: number;
+  startedAt: number;
+  resolveAt: number;
+}
+
+export interface Obstacle {
+  id: string;
+  x: number;
+  y: number;
+  r: number;
+  kind: "pillar" | "stall";
+}
+
 export interface Unit extends UnitInit {
   x: number;
   y: number;
+  /** Can't act or move until this time (stun). */
+  stunUntil: number;
+  /** Can't be stunned again until this time, so nobody gets chain-stunned to death. */
+  stunImmuneUntil: number;
+  windup: Windup | null;
+  /** A player has taken over this unit's movement (controlled units only). */
+  manual: boolean;
+  manualDest: Vec | null;
+  /** The AI has decided to sidestep this danger zone once it reacts. */
+  dodge: { zoneId: number; reactAt: number } | null;
   /** Can't move until this time (short wind-up after a cast, so kiting isn't free). */
   lockUntil: number;
   hp: number;
@@ -86,7 +125,10 @@ export interface Unit extends UnitInit {
 
 export type Intent =
   | { type: "cast"; skillIndex: number; targetId?: string }
-  | { type: "focus"; targetId: string };
+  | { type: "focus"; targetId: string }
+  | { type: "move"; x: number; y: number }
+  /** Hand movement back to the AI. */
+  | { type: "auto" };
 
 export interface PendingCast {
   skillIndex: number;
@@ -110,6 +152,15 @@ export interface BattleState {
   autoSides: Set<Side>;
   nextCommanderMs: number;
   queued: BattleEvent[];
+  obstacles: Obstacle[];
+  layout: string;
+  clock: { regularMs: number; shrinkMs: number; minRadius: number };
+  warned: boolean;
+  sudden: boolean;
+  nextRingTickMs: number;
+  zoneSeq: number;
+  /** Chance (0-1) that an AI-driven fighter sidesteps a danger zone, per side. */
+  dodgeChance: Record<Side, number>;
   maxDurationMs: number;
   finished: boolean;
   winnerSide: Side | null;
@@ -119,9 +170,15 @@ export type BattleEvent =
   | { t: number; type: "move"; units: { id: string; x: number; y: number }[] }
   | { t: number; type: "stance"; side: Side; stance: Stance }
   | { t: number; type: "cast"; actorId: string; skill: string; skillIndex: number; targetIds: string[] }
-  | { t: number; type: "damage"; sourceId: string; targetId: string; amount: number; absorbed: number; hp: number }
+  | { t: number; type: "damage"; sourceId: string; targetId: string; amount: number; absorbed: number; hp: number; mult?: number; ring?: boolean }
   | { t: number; type: "heal"; sourceId: string; targetId: string; amount: number; hp: number }
   | { t: number; type: "shield"; sourceId: string; targetId: string; amount: number }
   | { t: number; type: "mod"; sourceId: string; targetId: string; stat: ModStat; pct: number; durationMs: number }
+  | { t: number; type: "telegraph"; id: number; actorId: string; skill: string; skillIndex: number; x: number; y: number; radius: number; durationMs: number }
+  | { t: number; type: "burst"; id: number; actorId: string; x: number; y: number; radius: number }
+  | { t: number; type: "stun"; sourceId: string; targetId: string; durationMs: number }
+  | { t: number; type: "interrupt"; unitId: string; id: number }
+  | { t: number; type: "displace"; unitId: string; x: number; y: number; fromX: number; fromY: number }
+  | { t: number; type: "phase"; phase: "warning" | "sudden_death" }
   | { t: number; type: "death"; unitId: string }
   | { t: number; type: "end"; winnerSide: Side | null };

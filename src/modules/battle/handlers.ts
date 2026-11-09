@@ -4,6 +4,7 @@ import { createBattle, createRng } from "../../engine/index.js";
 import type { GameServer, GameSocket } from "../../plugins/socket.js";
 import { loadOpponentPool, buildOpponent, statPower, type PoolTemplate } from "./opponent.js";
 import { startRequestSchema, type StartAck, type UnitMeta } from "./protocol.js";
+import { ALLY_DODGE, DIFFICULTY_CONFIG } from "./rewards.js";
 import { SoloSession, type BattleEmitter } from "./session.js";
 import { MatchInProgressError, type BattleStore } from "./store.js";
 import { loadTeam, TeamError } from "./team.js";
@@ -81,7 +82,7 @@ export class BattleManager {
       });
 
       // Side 2 is always run by the AI commander; side 1 is too unless the player steers a fighter.
-      const state = createBattle([...team.units, ...foe.units], seed, { autoStance: [2] });
+      const state = createBattle([...team.units, ...foe.units], seed, { autoStance: [2], dodge: { 1: ALLY_DODGE, 2: DIFFICULTY_CONFIG[difficulty].dodge } });
       const { io, log } = this.deps;
       const target = room(userId);
       const emitter: BattleEmitter = {

@@ -17,7 +17,21 @@ export interface UnitMeta {
   spd: number;
   /** True for the one fighter this player is steering. */
   controlled: boolean;
-  skills: { index: number; name: string; kind: SkillKind; damageType: DamageType; cooldownMs: number; staminaCost: number; range: number }[];
+  skills: {
+    index: number;
+    name: string;
+    kind: SkillKind;
+    damageType: DamageType;
+    cooldownMs: number;
+    staminaCost: number;
+    range: number;
+    /** Set on big attacks that show a danger zone first. */
+    telegraphMs?: number;
+    radius?: number;
+    stunMs?: number;
+    knockback?: number;
+    pull?: number;
+  }[];
 }
 
 export interface BattleSnapshot {
@@ -26,6 +40,10 @@ export interface BattleSnapshot {
   stances: Record<Side, Stance>;
   finished: boolean;
   winnerSide: Side | null;
+  layout: string;
+  obstacles: { id: string; x: number; y: number; r: number; kind: "pillar" | "stall" }[];
+  /** Match clock: a normal fight lasts regularMs, then the ring closes in over shrinkMs. */
+  clock: { regularMs: number; shrinkMs: number; minRadius: number; capMs: number };
   units: {
     id: string;
     side: Side;
@@ -39,6 +57,9 @@ export interface BattleSnapshot {
     maxEnergy: number;
     shield: number;
     alive: boolean;
+    stunMs: number;
+    manual: boolean;
+    windup: { id: number; x: number; y: number; radius: number; remainingMs: number; totalMs: number } | null;
     cooldowns: number[];
   }[];
 }
@@ -104,6 +125,8 @@ export const startRequestSchema = z.object({
 export const intentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("cast"), skillIndex: z.number().int().min(0).max(3), targetId: z.string().max(64).optional() }),
   z.object({ type: z.literal("focus"), targetId: z.string().max(64) }),
+  z.object({ type: z.literal("move"), x: z.number().finite().min(-1000).max(1000), y: z.number().finite().min(-1000).max(1000) }),
+  z.object({ type: z.literal("auto") }),
 ]);
 
 export const stanceSchema = z.enum(["offensive", "neutral", "defensive"]);

@@ -85,7 +85,7 @@ afterEach(() => vi.useRealTimers());
 describe("SoloSession", () => {
   it("runs a real fight to the end, settles once, and stops ticking", async () => {
     // Strong enough to win, tanky enough that the fight lasts well past the 20 second minimum.
-    const t = setup([...team(1, { atk: 16, hp: 260 }), ...team(2, { hp: 520, atk: 8 })]);
+    const t = setup([...team(1, { atk: 18, hp: 320, def: 12 }), ...team(2, { hp: 420, atk: 5 })]);
     t.session.start();
     await vi.advanceTimersByTimeAsync(180_000);
 
@@ -121,7 +121,7 @@ describe("SoloSession", () => {
   });
 
   it("still ends the match when the payout can't be recorded", async () => {
-    const t = setup([...team(1, { atk: 16, hp: 260 }), ...team(2, { hp: 520, atk: 8 })], {
+    const t = setup([...team(1, { atk: 18, hp: 320, def: 12 }), ...team(2, { hp: 420, atk: 5 })], {
       settleMatch: async () => {
         throw new Error("db down");
       },

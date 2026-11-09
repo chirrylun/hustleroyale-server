@@ -1,3 +1,4 @@
+import { reachOf } from "./stats.js";
 import type { BattleState, SkillDef, Stance, Unit, Vec } from "./types.js";
 
 export const alive = (state: BattleState) => state.units.filter((u) => u.alive);
@@ -25,14 +26,20 @@ export function chooseTarget(state: BattleState, unit: Unit): Unit | undefined {
   if (focus) return focus;
 
   const stance = state.stances[unit.side];
-  const distW = stance === "offensive" ? 0.6 : 0.9; // offensive units will chase further
+  // Tanks screen the front line: they go for whoever is closest. Everyone else weighs more.
+  const distW = (stance === "offensive" ? 0.6 : 0.9) * (unit.role === "tank" ? 1.8 : 1);
+  const mates = alliesOf(state, unit).filter((a) => a.id !== unit.id);
 
   let best = enemies[0];
   let bestScore = -Infinity;
   for (const e of enemies) {
     let s = -dist(unit, e) * distW;
-    s += (1 - hpRatio(e)) * (stance === "offensive" ? 7 : 6); // finish the wounded
-    if (e.role === "healer") s += unit.role === "dps" ? 5 : 1; // DPS hunt healers
+    if (unit.role !== "tank") {
+      s += (1 - hpRatio(e)) * (stance === "offensive" ? 7 : 6); // finish the wounded
+      if (e.role === "healer") s += unit.role === "dps" ? 5 : 1; // DPS hunt healers
+      // Spread out: don't all pile onto the same enemy when others are open.
+      s -= mates.filter((a) => a.targetId === e.id).length * 2.4;
+    }
     if (e.role === "tank") s += 1.5; // tanks draw aggro
     if (e.id === unit.targetId) s += 3; // stickiness
     if (s > bestScore) {
@@ -45,7 +52,7 @@ export function chooseTarget(state: BattleState, unit: Unit): Unit | undefined {
 
 /** Targets a skill would hit right now, honouring its range. Empty means it can't be cast. */
 export function resolveTargets(state: BattleState, unit: Unit, skill: SkillDef, explicitId?: string): Unit[] {
-  const inRange = (u: Unit) => skill.range <= 0 || dist(unit, u) <= skill.range + 0.01;
+  const inRange = (u: Unit) => skill.range <= 0 || dist(unit, u) <= reachOf(skill.range) + 0.01;
   const allies = alliesOf(state, unit);
   const enemies = enemiesOf(state, unit);
   const lowestRatio = (pool: Unit[]) => pool.reduce((l, a) => (hpRatio(a) < hpRatio(l) ? a : l));
@@ -92,6 +99,13 @@ function worthCasting(state: BattleState, unit: Unit, skill: SkillDef, stance: S
   const targets = resolveTargets(state, unit, skill);
   if (targets.length === 0) return false;
   const below = HEAL_BELOW[stance];
+
+  if (skill.effect.stun_ms) {
+    const stunnable = targets.filter((e) => e.stunImmuneUntil <= state.timeMs);
+    if (stunnable.length === 0) return false;
+    // A charging big attack is the best moment to use a stun; otherwise just keep it on cooldown pace.
+    if (stunnable.some((e) => e.windup)) return true;
+  }
 
   switch (skill.kind) {
     case "heal":
