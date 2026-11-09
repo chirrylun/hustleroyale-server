@@ -51,6 +51,7 @@ export class SoloSession {
   private damageTaken = 0;
   private lastSyncMs = 0;
   private closed = false;
+  private lastMoveAt = 0;
 
   constructor(private readonly o: SessionOptions) {
     for (const u of o.state.units) this.sideOf.set(u.id, u.side);
@@ -82,6 +83,12 @@ export class SoloSession {
   intent(raw: unknown): void {
     const parsed = intentSchema.safeParse(raw);
     if (!parsed.success || !this.o.controlledUnitId || this.closed) return;
+    // Movement can be streamed from held keys: cap it so a modified client can't flood the server.
+    if (parsed.data.type === "move") {
+      const now = Date.now();
+      if (now - this.lastMoveAt < 60) return;
+      this.lastMoveAt = now;
+    }
     submitIntent(this.o.state, this.o.controlledUnitId, parsed.data);
   }
 

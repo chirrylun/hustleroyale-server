@@ -39,6 +39,10 @@ export function toSkillMeta(rows: SkillRow[]): UnitMeta["skills"] {
     cooldownMs: s.cooldown_ms,
     staminaCost: s.stamina_cost,
     range: s.range_units,
+    ...(s.effect?.telegraph_ms ? { telegraphMs: s.effect.telegraph_ms, radius: s.effect.radius ?? 2.5 } : {}),
+    ...(s.effect?.stun_ms ? { stunMs: s.effect.stun_ms } : {}),
+    ...(s.effect?.knockback ? { knockback: s.effect.knockback } : {}),
+    ...(s.effect?.pull ? { pull: s.effect.pull } : {}),
   }));
 }
 

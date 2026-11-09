@@ -29,12 +29,18 @@ export const TIERS = [
   { upto: 30, mult: 0.25 },
 ] as const;
 
-export const DIFFICULTY_CONFIG: Record<Difficulty, { power: number; win: number }> = {
-  /** `power`: enemy team strength as a fraction of yours. `win`: base points for a win. */
-  rookie: { power: 0.85, win: 12 },
-  hustler: { power: 1.0, win: 20 },
-  boss: { power: 1.15, win: 32 },
+export const DIFFICULTY_CONFIG: Record<Difficulty, { power: number; win: number; dodge: number }> = {
+  /**
+   * `power`: enemy team strength as a fraction of yours. `win`: base points for a win.
+   * `dodge`: chance the AI sidesteps a danger zone in time. Tougher bots read the fight better.
+   */
+  rookie: { power: 0.85, win: 12, dodge: 0.3 },
+  hustler: { power: 1.0, win: 20, dodge: 0.55 },
+  boss: { power: 1.15, win: 32, dodge: 0.8 },
 };
+
+/** The player's own AI-run fighters (the ones they aren't steering) always dodge at this rate. */
+export const ALLY_DODGE = 0.6;
 
 export const LOSS_CONSOLATION = 2;
 export const MIN_WIN_DURATION_MS = 20_000;
