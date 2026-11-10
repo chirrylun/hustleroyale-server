@@ -195,6 +195,8 @@ export function planMove(state: BattleState, unit: Unit): Vec | null {
         return keepInRing(state, { x: hurt.x + (unit.x - hurt.x) * k, y: hurt.y + (unit.y - hurt.y) * k });
       }
     }
+    // A melee-basic healer with allies stays behind them instead of oscillating at the danger line.
+    if (allies.length > 0 && basicRange <= 3) return null;
     return keepInRing(state, approach(unit, aim, basicReach, fan));
   }
 
