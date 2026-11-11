@@ -85,6 +85,7 @@ export function steer(state: BattleState, from: Vec, dest: Vec): Vec {
 
 /** Defensive teams hold a line at their own side of the arena until an enemy gets close. */
 const ENGAGE_DIST = 9;
+const STALL_MS = 5000;
 function holdLine(state: BattleState, unit: Unit): Vec | null {
   const lineX = state.arena.w * (unit.side === 1 ? 0.4 : 0.6);
   return Math.abs(unit.x - lineX) > 1 ? { x: lineX, y: unit.y } : null;
@@ -135,6 +136,8 @@ export function planMove(state: BattleState, unit: Unit): Vec | null {
   if (!target || enemies.length === 0) return null;
   unit.targetId = target.id;
   const now = state.timeMs;
+  // Nobody has landed a hit for a while (everyone retreating, holding a line or kiting): stop being cautious and fight.
+  const stalled = now - state.lastHitMs > STALL_MS;
 
   // 1. Sidestep a charging attack, once this fighter has had time to react.
   if (unit.dodge) {
@@ -184,7 +187,7 @@ export function planMove(state: BattleState, unit: Unit): Vec | null {
   if (unit.role === "healer") {
     const healReach = reachOf(unit.skills.find((s) => s.kind === "heal")?.range || 6);
     const danger = (stance === "defensive" ? 7 : 6) + UNIT_RADIUS * 2;
-    if (nearestDist < danger && allies.length > 0) {
+    if (nearestDist < danger && allies.length > 0 && !stalled) {
       const flee = awayFrom(unit, nearest, 4);
       return keepInRing(state, allyCenter ? { x: flee.x + (allyCenter.x - flee.x) * 0.3, y: flee.y + (allyCenter.y - flee.y) * 0.3 } : flee);
     }
@@ -196,22 +199,22 @@ export function planMove(state: BattleState, unit: Unit): Vec | null {
       }
     }
     // A melee-basic healer with allies stays behind them instead of oscillating at the danger line.
-    if (allies.length > 0 && basicRange <= 3) return null;
+    if (allies.length > 0 && basicRange <= 3 && !stalled) return null;
     return keepInRing(state, approach(unit, aim, basicReach, fan));
   }
 
   // Wounded fighters fall back to the healer. With no healer left there is nowhere to run, so they fight on.
   const retreatAt = RETREAT_HP[stance] * (unit.role === "tank" ? 0.5 : 1);
-  if (hpRatio(unit) < retreatAt && nearestDist < 6 + UNIT_RADIUS * 2) {
+  if (!stalled && hpRatio(unit) < retreatAt && nearestDist < 6 + UNIT_RADIUS * 2) {
     const healer = allies.find((a) => a.role === "healer");
     if (healer && dist(unit, healer) > 2 + UNIT_RADIUS * 2) return keepInRing(state, { x: healer.x, y: healer.y });
   }
 
   // Defensive: hold the line until the enemy commits, then fight.
-  if (stance === "defensive" && nearestDist > ENGAGE_DIST + UNIT_RADIUS * 2) return keepInRing(state, holdLine(state, unit));
+  if (!stalled && stance === "defensive" && nearestDist > ENGAGE_DIST + UNIT_RADIUS * 2) return keepInRing(state, holdLine(state, unit));
 
   // Tanks on defence body-block for the weakest ally.
-  if (unit.role === "tank" && stance === "defensive" && allies.length) {
+  if (!stalled && unit.role === "tank" && stance === "defensive" && allies.length) {
     const weak = allies.reduce((l, a) => (hpRatio(a) < hpRatio(l) ? a : l));
     if (hpRatio(weak) < 0.7) {
       const threat = enemies.reduce((n, e) => (dist(weak, e) < dist(weak, n) ? e : n));
@@ -222,7 +225,7 @@ export function planMove(state: BattleState, unit: Unit): Vec | null {
   }
 
   // Ranged attackers kite: back off when an enemy gets too close, close in when out of range.
-  if (ranged) {
+  if (ranged && !stalled) {
     const kite = basicReach * (stance === "defensive" ? 0.55 : stance === "offensive" ? 0.3 : 0.42);
     if (nearestDist < kite) {
       const flee = awayFrom(unit, nearest, 3);

@@ -139,6 +139,7 @@ export function createBattle(init: UnitInit[], seed: number, opts: BattleOptions
     // A side whose player controls a fighter can't also micro-manage stance: the AI commander does it.
     autoSides: new Set<Side>([...(opts.autoStance ?? []), ...init.filter((u) => u.controlled).map((u) => u.side)]),
     nextCommanderMs: 0,
+    lastHitMs: 0,
     queued: [],
     obstacles: (layout?.obstacles ?? []).map((o, i) => ({ ...o, id: `ob-${i + 1}` })),
     layout: layout?.name ?? "open",
@@ -484,6 +485,7 @@ export function step(state: BattleState, dtMs: number): BattleEvent[] {
     }
   }
 
+  if (events.some((e) => e.type === "damage" && !(e as { ring?: boolean }).ring)) state.lastHitMs = state.timeMs;
   state.tick += 1;
   if (!state.finished) evaluateEnd(state, events);
   return events;

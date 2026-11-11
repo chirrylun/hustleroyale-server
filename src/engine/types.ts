@@ -151,6 +151,8 @@ export interface BattleState {
   /** Sides whose stance the AI commander manages (AI sides, and sides whose player controls a fighter). */
   autoSides: Set<Side>;
   nextCommanderMs: number;
+  /** Battle-clock time of the last hit between fighters; AI commits to the fight when it goes quiet. */
+  lastHitMs: number;
   queued: BattleEvent[];
   obstacles: Obstacle[];
   layout: string;
