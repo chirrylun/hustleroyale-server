@@ -47,35 +47,35 @@ export const DEFAULT_MAX_DURATION_MS = HARD_CAP_MS;
 const INTENT_TTL_MS = 3000; // long enough for the unit to walk into range
 
 /** How far from its own edge each role starts: tanks up front, healers at the back. */
-const START_X: Record<Role, number> = { tank: 7, dps: 5, healer: 3 };
+const START_X: Record<Role, number> = { tank: 9, dps: 6.5, healer: 4 };
 
 /**
  * Arena layouts. Every one is mirror-symmetric left to right, exactly like the starting lineups,
- * so cover never favours a side. They are in arena units for the default 32 x 20 arena.
+ * so cover never favours a side. They are in arena units for the default 48 x 24 arena.
  */
 const LAYOUTS: { name: string; obstacles: Omit<Obstacle, "id">[] }[] = [
   {
     name: "junction",
     obstacles: [
-      { x: 16, y: 10, r: 1.9, kind: "pillar" },
-      { x: 16, y: 3.4, r: 1.3, kind: "stall" },
-      { x: 16, y: 16.6, r: 1.3, kind: "stall" },
+      { x: 24, y: 12, r: 1.9, kind: "pillar" },
+      { x: 24, y: 4.1, r: 1.3, kind: "stall" },
+      { x: 24, y: 19.9, r: 1.3, kind: "stall" },
     ],
   },
   {
     name: "gate",
     obstacles: [
-      { x: 16, y: 6.3, r: 1.8, kind: "pillar" },
-      { x: 16, y: 13.7, r: 1.8, kind: "pillar" },
+      { x: 24, y: 7.6, r: 1.8, kind: "pillar" },
+      { x: 24, y: 16.4, r: 1.8, kind: "pillar" },
     ],
   },
   {
     name: "market",
     obstacles: [
-      { x: 11, y: 5.5, r: 1.4, kind: "stall" },
-      { x: 11, y: 14.5, r: 1.4, kind: "stall" },
-      { x: 21, y: 5.5, r: 1.4, kind: "stall" },
-      { x: 21, y: 14.5, r: 1.4, kind: "stall" },
+      { x: 16.5, y: 6.6, r: 1.4, kind: "stall" },
+      { x: 16.5, y: 17.4, r: 1.4, kind: "stall" },
+      { x: 31.5, y: 6.6, r: 1.4, kind: "stall" },
+      { x: 31.5, y: 17.4, r: 1.4, kind: "stall" },
     ],
   },
 ];
