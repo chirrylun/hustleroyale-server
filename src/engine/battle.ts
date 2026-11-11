@@ -88,13 +88,14 @@ export interface BattleOptions {
   dodge?: Partial<Record<Side, number>>;
   /** Override the match clock (mostly for tests). */
   clock?: Partial<{ regularMs: number; shrinkMs: number; minRadius: number }>;
-  /** Pick an arena layout by index instead of at random. -1 = no obstacles. */
+  /** Pick an obstacle layout by index. Default (-1) = open arena with no obstacles. */
   layout?: number;
 }
 
 export function createBattle(init: UnitInit[], seed: number, opts: BattleOptions = {}): BattleState {
   const rng = createRng(seed);
-  const layoutIndex = opts.layout ?? Math.floor(rng.next() * LAYOUTS.length);
+  // Open arena by default (no cover). Pass `layout` to bring obstacles back.
+  const layoutIndex = opts.layout ?? -1;
   const layout = layoutIndex >= 0 ? LAYOUTS[layoutIndex % LAYOUTS.length] : undefined;
   const units: Unit[] = init.map((u) => {
     const energyCap = maxEnergy(u.stats.stamina);
