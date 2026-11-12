@@ -226,7 +226,7 @@ export type BattleEvent =
   | { t: number; type: "stance"; side: Side; stance: Stance }
   | { t: number; type: "cast"; actorId: string; skill: string; skillIndex: number; targetIds: string[] }
   | { t: number; type: "damage"; sourceId: string; targetId: string; amount: number; absorbed: number; hp: number; mult?: number; ring?: boolean; dot?: boolean; crit?: boolean }
-  | { t: number; type: "heal"; sourceId: string; targetId: string; amount: number; hp: number }
+  | { t: number; type: "heal"; sourceId: string; targetId: string; amount: number; hp: number; quiet?: boolean }
   | { t: number; type: "shield"; sourceId: string; targetId: string; amount: number }
   | { t: number; type: "mod"; sourceId: string; targetId: string; stat: ModStat; pct: number; durationMs: number }
   | { t: number; type: "telegraph"; id: number; actorId: string; skill: string; skillIndex: number; x: number; y: number; radius: number; durationMs: number }

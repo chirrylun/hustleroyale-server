@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Rng, Role, Stats, UnitInit } from "../../engine/index.js";
 import type { Difficulty, UnitMeta } from "./protocol.js";
 import { DIFFICULTY_CONFIG } from "./rewards.js";
-import { one, toSkillDef, toSkillMeta, type SkillRow } from "./team.js";
+import { minionMetas, one, toPassive, toSkillDef, toSkillMeta, type SkillRow } from "./team.js";
 
 type Rarity = "common" | "uncommon" | "rare" | "legendary";
 
@@ -18,6 +18,7 @@ export interface PoolTemplate {
   base_spd: number;
   base_stamina: number;
   base_magic: number;
+  passive?: unknown;
   skills: SkillRow[];
 }
 
@@ -44,7 +45,7 @@ export async function loadOpponentPool(supabase: SupabaseClient): Promise<PoolTe
   const { data, error } = await supabase
     .from("fighter_templates")
     .select(
-      "id, name, role, rarity, sprite_key, base_hp, base_atk, base_def, base_spd, base_stamina, base_magic, skills:fighter_template_skills(slot, skill:skills(slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect))",
+      "id, name, role, rarity, sprite_key, base_hp, base_atk, base_def, base_spd, base_stamina, base_magic, passive, skills:fighter_template_skills(slot, skill:skills(slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect))",
     );
   if (error) throw error;
   return ((data ?? []) as unknown as PoolRow[]).map((t) => ({
@@ -124,6 +125,7 @@ export function buildOpponent(
       role: t.role,
       stats: { hp: scale(s.hp), atk: scale(s.atk), def: scale(s.def), spd: scale(s.spd), stamina: scale(s.stamina), magic: scale(s.magic) },
       skills: t.skills.map(toSkillDef),
+      passive: toPassive(t.passive),
     });
     metas.push({
       id,
@@ -139,5 +141,5 @@ export function buildOpponent(
     });
   });
 
-  return { units, metas, totalHp: units.reduce((sum, u) => sum + u.stats.hp, 0) };
+  return { units, metas: [...metas, ...minionMetas(units)], totalHp: units.reduce((sum, u) => sum + u.stats.hp, 0) };
 }

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { DamageType, Role, SkillDef, SkillEffect, SkillKind, TargetRule, UnitInit } from "../../engine/index.js";
+import { minionInit, type DamageType, type Passive, type Role, type SkillDef, type SkillEffect, type SkillKind, type TargetRule, type UnitInit } from "../../engine/index.js";
 import type { UnitMeta } from "./protocol.js";
 
 /** A skill row exactly as the `skills` table stores it. */
@@ -57,6 +57,29 @@ export interface LoadedTeam {
   metas: UnitMeta[];
 }
 
+interface TemplateRow {
+  name: string;
+  role: Role;
+  sprite_key: string;
+  passive?: unknown;
+}
+
+const PASSIVES = new Set(["regen", "thorns", "lifesteal", "crit", "energy", "resist"]);
+/** A passive straight from the database, checked so a bad row can't put nonsense in a fight. */
+export function toPassive(raw: unknown): Passive | undefined {
+  const p = raw as { type?: string; value?: number } | null;
+  if (!p || typeof p.type !== "string" || !PASSIVES.has(p.type) || typeof p.value !== "number" || !(p.value > 0 && p.value <= 1)) return undefined;
+  return { type: p.type as Passive["type"], value: p.value };
+}
+
+/** The meta for a summoned minion: the browser needs to know it exists before it is called. */
+export function minionMetas(units: UnitInit[]): UnitMeta[] {
+  return units.filter((u) => u.skills.some((s) => s.effect.summon)).map((u) => {
+    const m = minionInit(u);
+    return { id: m.id, side: m.side, name: m.name, role: m.role, spriteKey: "skeleton", grade: null, level: 1, spd: m.stats.spd, controlled: false, summon: true, skills: [{ index: 0, name: "Strike", kind: "damage", damageType: "physical", cooldownMs: 1000, staminaCost: 0, range: 2 }] };
+  });
+}
+
 interface FighterRow {
   id: string;
   grade: string;
@@ -68,7 +91,7 @@ interface FighterRow {
   stamina: number;
   magic: number;
   team_slot: number;
-  template: { name: string; role: Role; sprite_key: string } | { name: string; role: Role; sprite_key: string }[] | null;
+  template: TemplateRow | TemplateRow[] | null;
   skills: { slot: number; skill: SkillRow | SkillRow[] | null }[] | null;
 }
 
@@ -83,7 +106,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
   const { data, error } = await supabase
     .from("fighters")
     .select(
-      "id, grade, level, hp, atk, def, spd, stamina, magic, team_slot, template:fighter_templates(name, role, sprite_key), skills:fighter_skills(slot, skill:skills(slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect))",
+      "id, grade, level, hp, atk, def, spd, stamina, magic, team_slot, template:fighter_templates(name, role, sprite_key, passive), skills:fighter_skills(slot, skill:skills(slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect))",
     )
     .eq("owner_id", userId)
     .not("team_slot", "is", null)
@@ -118,6 +141,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
       stats: { hp: row.hp, atk: row.atk, def: row.def, spd: row.spd, stamina: row.stamina, magic: row.magic },
       skills: skillRows.map(toSkillDef),
       controlled,
+      passive: toPassive(template.passive),
     });
     metas.push({
       id: row.id,
@@ -132,5 +156,5 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
       skills: toSkillMeta(skillRows),
     });
   }
-  return { units, metas };
+  return { units, metas: [...metas, ...minionMetas(units)] };
 }

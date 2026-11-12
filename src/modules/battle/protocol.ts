@@ -17,6 +17,8 @@ export interface UnitMeta {
   spd: number;
   /** True for the one fighter this player is steering. */
   controlled: boolean;
+  /** A minion that sits out until its owner summons it. */
+  summon?: boolean;
   skills: {
     index: number;
     name: string;

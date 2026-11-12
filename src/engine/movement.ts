@@ -187,7 +187,8 @@ export function planMove(state: BattleState, unit: Unit): Vec | null {
   if (unit.role === "healer") {
     const healReach = reachOf(unit.skills.find((s) => s.kind === "heal")?.range || 6);
     const danger = (stance === "defensive" ? 7 : 6) + UNIT_RADIUS * 2;
-    if (nearestDist < danger && allies.length > 0 && !stalled) {
+    const brawler = basicRange <= 3; // a melee healer fights alongside its team until it is hurt
+    if (nearestDist < danger && allies.length > 0 && !stalled && (!brawler || hpRatio(unit) < 0.5)) {
       const flee = awayFrom(unit, nearest, 4);
       return keepInRing(state, allyCenter ? { x: flee.x + (allyCenter.x - flee.x) * 0.3, y: flee.y + (allyCenter.y - flee.y) * 0.3 } : flee);
     }
@@ -198,8 +199,8 @@ export function planMove(state: BattleState, unit: Unit): Vec | null {
         return keepInRing(state, { x: hurt.x + (unit.x - hurt.x) * k, y: hurt.y + (unit.y - hurt.y) * k });
       }
     }
-    // A melee-basic healer with allies stays behind them instead of oscillating at the danger line.
-    if (allies.length > 0 && basicRange <= 3 && !stalled) return null;
+    // A melee-basic healer stays near a hurt ally, otherwise it joins the fight.
+    if (allies.length > 0 && brawler && !stalled && allies.some((a) => hpRatio(a) < 0.7)) return null;
     return keepInRing(state, approach(unit, aim, basicReach, fan));
   }
 

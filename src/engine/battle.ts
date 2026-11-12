@@ -330,7 +330,7 @@ function dealDamage(
   });
 
   const steal = (opts.lifesteal ?? 0) + (source.passive?.type === "lifesteal" ? source.passive.value : 0);
-  if (steal > 0 && source.alive) healUnit(state, source, source, Math.round(amount * steal), events);
+  if (steal > 0 && source.alive) healUnit(state, source, source, Math.round(amount * steal), events, true);
   const thorns = target.passive?.type === "thorns" ? target.passive.value : 0;
   if (thorns > 0 && !opts.dot && source.alive && target.hp > 0 && source.side !== target.side) {
     const back = Math.max(1, Math.round(amount * thorns));
@@ -342,10 +342,10 @@ function dealDamage(
   return amount;
 }
 
-function healUnit(state: BattleState, source: Unit, target: Unit, amount: number, events: BattleEvent[]) {
+function healUnit(state: BattleState, source: Unit, target: Unit, amount: number, events: BattleEvent[], quiet = false) {
   const before = target.hp;
   target.hp = Math.min(target.maxHp, target.hp + Math.round(amount * (state.sudden ? SUDDEN_HEAL_FACTOR : 1)));
-  if (target.hp > before) events.push({ t: state.timeMs, type: "heal", sourceId: source.id, targetId: target.id, amount: target.hp - before, hp: target.hp });
+  if (target.hp > before) events.push({ t: state.timeMs, type: "heal", sourceId: source.id, targetId: target.id, amount: target.hp - before, hp: target.hp, ...(quiet ? { quiet: true } : {}) });
 }
 
 function addMod(state: BattleState, source: Unit, target: Unit, stat: ModStat, pct: number, durationMs: number, events: BattleEvent[]) {
@@ -426,7 +426,7 @@ function runOverTime(state: BattleState, events: BattleEvent[]) {
       kill(state, u, events);
       continue;
     }
-    if (u.passive?.type === "regen" && u.hp < u.maxHp) healUnit(state, u, u, Math.max(1, Math.round(u.maxHp * u.passive.value)), events);
+    if (u.passive?.type === "regen" && u.hp < u.maxHp) healUnit(state, u, u, Math.max(1, Math.round(u.maxHp * u.passive.value)), events, true);
   }
 }
 
@@ -440,7 +440,7 @@ function tickOverTime(state: BattleState, events: BattleEvent[]) {
         const src = state.units.find((x) => x.id === o.sourceId);
         if (!src) continue;
         if (o.kind === "dot") dealDamage(state, src, u, o.damageType === "none" ? "magical" : o.damageType, o.power, events, { dot: true });
-        else healUnit(state, src, u, healAmount(effStat(src, "magic"), o.power), events);
+        else healUnit(state, src, u, healAmount(effStat(src, "magic"), o.power), events, true);
       }
     }
     u.overTime = u.overTime.filter((o) => o.untilMs > t);
