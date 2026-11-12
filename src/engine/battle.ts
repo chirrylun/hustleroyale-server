@@ -12,6 +12,7 @@ import {
   energyRegenPerSec,
   HARD_CAP_MS,
   healAmount,
+  CRIT_MULT,
   KNOCK_LOCK_MS,
   magicalDamage,
   maxEnergy,
@@ -34,6 +35,7 @@ import {
   type BattleEvent,
   type BattleState,
   type Intent,
+  type ModStat,
   type Obstacle,
   type Role,
   type SkillDef,
@@ -92,15 +94,31 @@ export interface BattleOptions {
   layout?: number;
 }
 
+const MINION_STRIKE: SkillDef = { slug: "minion-strike", kind: "damage", damageType: "physical", power: 1, cooldownMs: 1000, staminaCost: 0, range: 2, targetRule: "enemy_nearest", effect: {} };
+
+/** A summoned minion waits out of the fight (not alive) until its owner calls it. */
+export function minionInit(owner: UnitInit): UnitInit {
+  return {
+    id: `${owner.id}:minion`,
+    side: owner.side,
+    name: "Skeleton",
+    role: "dps",
+    stats: { hp: 1, atk: 1, def: 1, spd: 9, stamina: 6, magic: 0 },
+    skills: [MINION_STRIKE],
+    summonOf: owner.id,
+  };
+}
+
 export function createBattle(init: UnitInit[], seed: number, opts: BattleOptions = {}): BattleState {
   const rng = createRng(seed);
   // Open arena by default (no cover). Pass `layout` to bring obstacles back.
   const layoutIndex = opts.layout ?? -1;
   const layout = layoutIndex >= 0 ? LAYOUTS[layoutIndex % LAYOUTS.length] : undefined;
-  const units: Unit[] = init.map((u) => {
+  const withMinions = [...init, ...init.filter((u) => u.skills.some((s) => s.effect.summon)).map(minionInit)];
+  const units: Unit[] = withMinions.map((u) => {
     const energyCap = maxEnergy(u.stats.stamina);
-    const mates = init.filter((m) => m.side === u.side);
-    const row = mates.indexOf(u);
+    const mates = init.filter((m) => m.side === (u.side));
+    const row = Math.max(0, mates.indexOf(u));
     return {
       ...u,
       // Small seeded jitter so mirrored lineups never tie exactly (and no two games open identically).
@@ -123,8 +141,15 @@ export function createBattle(init: UnitInit[], seed: number, opts: BattleOptions
       // Basic attacks start slightly desynced; specials start 30% charged so nobody opens with a nuke.
       cooldowns: u.skills.map((s, i) => (i === 0 ? Math.round(rng.next() * 500) : Math.round(s.cooldownMs * 0.7))),
       mods: [],
-      alive: true,
+      alive: !u.summonOf,
       focusId: null,
+      overTime: [],
+      evadeHits: 0,
+      evadeUntil: 0,
+      tauntId: null,
+      tauntUntil: 0,
+      silenceUntil: 0,
+      expiresAt: 0,
     };
   });
   const maxDurationMs = opts.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
@@ -156,6 +181,7 @@ export function createBattle(init: UnitInit[], seed: number, opts: BattleOptions
     maxDurationMs,
     finished: false,
     winnerSide: null,
+    lastRegenMs: 0,
   };
 }
 
@@ -260,60 +286,188 @@ function displace(state: BattleState, target: Unit, from: { x: number; y: number
   });
 }
 
+/**
+ * One hit of damage, whether from a skill or from damage over time. Handles dodges, the rarity
+ * passives (crit, resist, thorns, lifesteal) and the shield. Returns the damage dealt, or null if
+ * the target dodged it. The target dying is handled here.
+ */
+function dealDamage(
+  state: BattleState,
+  source: Unit,
+  target: Unit,
+  damageType: "physical" | "magical",
+  power: number,
+  events: BattleEvent[],
+  opts: { dot?: boolean; lifesteal?: number; bonus?: { below: number; pct: number } } = {},
+): number | null {
+  const t = state.timeMs;
+  if (!opts.dot && target.evadeHits > 0 && t < target.evadeUntil) {
+    target.evadeHits -= 1;
+    events.push({ t, type: "evade", sourceId: source.id, targetId: target.id });
+    return null;
+  }
+  const variance = 1 + (state.rng.next() * 2 - 1) * DAMAGE_VARIANCE;
+  const raw =
+    damageType === "magical"
+      ? magicalDamage(effStat(source, "magic"), effStat(target, "def"), power)
+      : physicalDamage(effStat(source, "atk"), effStat(target, "def"), power);
+  const mult = typeMultiplier(target.role, damageType);
+  let amount = raw * variance * mult;
+  if (opts.bonus && target.hp / target.maxHp < opts.bonus.below) amount *= 1 + opts.bonus.pct / 100;
+  let crit = false;
+  if (!opts.dot && source.passive?.type === "crit" && state.rng.next() < source.passive.value) {
+    amount *= CRIT_MULT;
+    crit = true;
+  }
+  if (target.passive?.type === "resist") amount *= 1 - target.passive.value;
+  amount = Math.max(1, Math.round(amount));
+  const absorbed = Math.min(target.shield, amount);
+  target.shield -= absorbed;
+  target.hp = Math.max(0, target.hp - (amount - absorbed));
+  events.push({
+    t, type: "damage", sourceId: source.id, targetId: target.id, amount, absorbed, hp: target.hp,
+    ...(mult !== 1 ? { mult } : {}), ...(opts.dot ? { dot: true } : {}), ...(crit ? { crit: true } : {}),
+  });
+
+  const steal = (opts.lifesteal ?? 0) + (source.passive?.type === "lifesteal" ? source.passive.value : 0);
+  if (steal > 0 && source.alive) healUnit(state, source, source, Math.round(amount * steal), events);
+  const thorns = target.passive?.type === "thorns" ? target.passive.value : 0;
+  if (thorns > 0 && !opts.dot && source.alive && target.hp > 0 && source.side !== target.side) {
+    const back = Math.max(1, Math.round(amount * thorns));
+    source.hp = Math.max(0, source.hp - back);
+    events.push({ t, type: "damage", sourceId: target.id, targetId: source.id, amount: back, absorbed: 0, hp: source.hp, dot: true });
+    if (source.hp <= 0) kill(state, source, events);
+  }
+  if (target.hp <= 0) kill(state, target, events);
+  return amount;
+}
+
+function healUnit(state: BattleState, source: Unit, target: Unit, amount: number, events: BattleEvent[]) {
+  const before = target.hp;
+  target.hp = Math.min(target.maxHp, target.hp + Math.round(amount * (state.sudden ? SUDDEN_HEAL_FACTOR : 1)));
+  if (target.hp > before) events.push({ t: state.timeMs, type: "heal", sourceId: source.id, targetId: target.id, amount: target.hp - before, hp: target.hp });
+}
+
+function addMod(state: BattleState, source: Unit, target: Unit, stat: ModStat, pct: number, durationMs: number, events: BattleEvent[]) {
+  const t = state.timeMs;
+  target.mods = target.mods.filter((m) => !(m.stat === stat && Math.sign(m.pct) === Math.sign(pct)));
+  target.mods.push({ stat, pct, untilMs: t + durationMs });
+  events.push({ t, type: "mod", sourceId: source.id, targetId: target.id, stat, pct, durationMs });
+}
+
 /** One skill's effect on one target. Used both for instant skills and when a danger zone lands. */
 function applyEffect(state: BattleState, unit: Unit, skill: SkillDef, target: Unit, events: BattleEvent[]) {
   const t = state.timeMs;
+  const fx = skill.effect;
   switch (skill.kind) {
     case "damage": {
-      const variance = 1 + (state.rng.next() * 2 - 1) * DAMAGE_VARIANCE;
-      const raw =
-        skill.damageType === "magical"
-          ? magicalDamage(effStat(unit, "magic"), effStat(target, "def"), skill.power)
-          : physicalDamage(effStat(unit, "atk"), effStat(target, "def"), skill.power);
-      const mult = typeMultiplier(target.role, skill.damageType);
-      const amount = Math.max(1, Math.round(raw * variance * mult));
-      const absorbed = Math.min(target.shield, amount);
-      target.shield -= absorbed;
-      target.hp = Math.max(0, target.hp - (amount - absorbed));
-      events.push({ t, type: "damage", sourceId: unit.id, targetId: target.id, amount, absorbed, hp: target.hp, ...(mult !== 1 ? { mult } : {}) });
-      if (target.hp <= 0) {
-        kill(state, target, events);
-        return;
-      }
+      if (skill.damageType === "none") break;
+      const dealt = dealDamage(state, unit, target, skill.damageType, skill.power, events, { lifesteal: fx.lifesteal, bonus: fx.bonus_low_hp });
+      if (dealt === null || !target.alive) return;
       break;
     }
     case "heal": {
-      const before = target.hp;
-      const factor = state.sudden ? SUDDEN_HEAL_FACTOR : 1;
-      target.hp = Math.min(target.maxHp, target.hp + Math.round(healAmount(effStat(unit, "magic"), skill.power) * factor));
-      events.push({ t, type: "heal", sourceId: unit.id, targetId: target.id, amount: target.hp - before, hp: target.hp });
+      healUnit(state, unit, target, healAmount(effStat(unit, "magic"), skill.power), events);
       break;
     }
     case "shield": {
       const amount = Math.round(shieldAmount(effStat(unit, "def"), skill.power));
       target.shield = Math.max(target.shield, amount);
-      target.shieldUntil = t + (skill.effect.duration_ms ?? 5000);
+      target.shieldUntil = t + (fx.duration_ms ?? 5000);
       events.push({ t, type: "shield", sourceId: unit.id, targetId: target.id, amount });
       break;
     }
     case "buff":
     case "debuff": {
-      const { stat, pct, duration_ms } = skill.effect;
-      if (!stat || pct === undefined) break;
-      const durationMs = duration_ms ?? 5000;
-      target.mods = target.mods.filter((m) => !(m.stat === stat && Math.sign(m.pct) === Math.sign(pct)));
-      target.mods.push({ stat, pct, untilMs: t + durationMs });
-      events.push({ t, type: "mod", sourceId: unit.id, targetId: target.id, stat, pct, durationMs });
+      const list = fx.mods ?? (fx.stat && fx.pct !== undefined ? [{ stat: fx.stat, pct: fx.pct }] : []);
+      for (const m of list) addMod(state, unit, target, m.stat, m.pct, fx.duration_ms ?? 5000, events);
+      if (fx.evade_hits) {
+        target.evadeHits = fx.evade_hits;
+        target.evadeUntil = t + (fx.evade_ms ?? 3000);
+      }
       break;
     }
   }
 
+  if (fx.cleanse && target.alive) {
+    target.mods = target.mods.filter((m) => m.pct >= 0);
+    target.overTime = target.overTime.filter((o) => o.kind !== "dot");
+    target.silenceUntil = 0;
+    events.push({ t, type: "cleanse", targetId: target.id });
+  }
+  const over = fx.dot ?? fx.hot;
+  if (over && target.alive) {
+    const kind = fx.dot ? "dot" : "hot";
+    target.overTime = target.overTime.filter((o) => !(o.slug === skill.slug && o.sourceId === unit.id));
+    const interval = over.interval_ms ?? 1000;
+    target.overTime.push({ sourceId: unit.id, kind, damageType: skill.damageType === "none" ? "magical" : skill.damageType, power: over.power, intervalMs: interval, nextMs: t + interval, untilMs: t + over.duration_ms, slug: skill.slug });
+  }
+
   // Crowd control only ever lands on enemies.
   if (target.side === unit.side || !target.alive) return;
-  const { stun_ms, knockback, pull } = skill.effect;
+  const { stun_ms, knockback, pull, taunt_ms, silence_ms } = fx;
+  if (taunt_ms) {
+    target.tauntId = unit.id;
+    target.tauntUntil = t + taunt_ms;
+  }
+  if (silence_ms) target.silenceUntil = t + silence_ms;
   if (stun_ms) stun(state, unit, target, stun_ms, events);
   if (knockback) displace(state, target, unit, knockback, events);
   else if (pull) displace(state, target, unit, -pull, events);
+}
+
+/** Ticks damage and healing over time, and retires summoned minions whose time is up. */
+function runOverTime(state: BattleState, events: BattleEvent[]) {
+  const t = state.timeMs;
+  for (const u of state.units) {
+    if (!u.alive) continue;
+    if (u.expiresAt > 0 && t >= u.expiresAt) {
+      u.hp = 0;
+      kill(state, u, events);
+      continue;
+    }
+    if (u.passive?.type === "regen" && u.hp < u.maxHp) healUnit(state, u, u, Math.max(1, Math.round(u.maxHp * u.passive.value)), events);
+  }
+}
+
+function tickOverTime(state: BattleState, events: BattleEvent[]) {
+  const t = state.timeMs;
+  for (const u of state.units) {
+    if (!u.alive || u.overTime.length === 0) continue;
+    for (const o of [...u.overTime]) {
+      while (u.alive && o.nextMs <= t && o.nextMs <= o.untilMs) {
+        o.nextMs += o.intervalMs;
+        const src = state.units.find((x) => x.id === o.sourceId);
+        if (!src) continue;
+        if (o.kind === "dot") dealDamage(state, src, u, o.damageType === "none" ? "magical" : o.damageType, o.power, events, { dot: true });
+        else healUnit(state, src, u, healAmount(effStat(src, "magic"), o.power), events);
+      }
+    }
+    u.overTime = u.overTime.filter((o) => o.untilMs > t);
+  }
+}
+
+/** Calls a dormant minion onto the field next to its owner. */
+function summonMinion(state: BattleState, owner: Unit, skill: SkillDef, events: BattleEvent[]) {
+  const cfg = skill.effect.summon;
+  const m = state.units.find((u) => u.summonOf === owner.id && !u.alive);
+  if (!cfg || !m) return;
+  const hp = Math.max(10, Math.round(owner.maxHp * cfg.hp_pct));
+  const atk = Math.max(6, Math.round(Math.max(owner.stats.magic, owner.stats.atk) * cfg.atk_pct));
+  m.stats = { ...m.stats, hp, atk, def: Math.round(owner.stats.def * 0.7) };
+  m.hp = m.maxHp = hp;
+  m.shield = 0;
+  m.mods = [];
+  m.overTime = [];
+  m.stunUntil = 0;
+  m.windup = null;
+  m.cooldowns = m.skills.map(() => 0);
+  const spot = clampToArena(state, { x: owner.x + (owner.side === 1 ? 2.4 : -2.4), y: owner.y + (state.rng.next() - 0.5) * 3 });
+  m.x = spot.x;
+  m.y = spot.y;
+  m.alive = true;
+  m.expiresAt = state.timeMs + cfg.duration_ms;
+  events.push({ t: state.timeMs, type: "summon", ownerId: owner.id, unitId: m.id, x: round2(m.x), y: round2(m.y) });
 }
 
 /** A big attack starts charging: show the danger zone, root the caster, and let the AI react. */
@@ -369,7 +523,8 @@ function perform(state: BattleState, unit: Unit, skillIndex: number, explicitId:
   unit.cooldowns[skillIndex] = cooldownMs(skill.cooldownMs, effStat(unit, "spd"));
   unit.lockUntil = state.timeMs + (skillIndex === 0 ? CAST_LOCK_BASIC_MS : CAST_LOCK_SPECIAL_MS);
   events.push({ t: state.timeMs, type: "cast", actorId: unit.id, skill: skill.slug, skillIndex, targetIds: targets.map((x) => x.id) });
-  for (const target of targets) applyEffect(state, unit, skill, target, events);
+  if (skill.effect.summon) summonMinion(state, unit, skill, events);
+  else for (const target of targets) applyEffect(state, unit, skill, target, events);
 }
 
 /** Warning, then sudden death: a closing ring that hurts anyone caught outside it. */
@@ -411,7 +566,7 @@ function evaluateEnd(state: BattleState, events: BattleEvent[]) {
   else if (b === 0) winner = 1;
   else if (state.timeMs >= state.maxDurationMs) {
     const score = (side: Side) =>
-      state.units.filter((u) => u.side === side).reduce((sum, u) => sum + u.hp / u.maxHp, 0);
+      state.units.filter((u) => u.side === side && !u.summonOf).reduce((sum, u) => sum + u.hp / u.maxHp, 0);
     const [s1, s2] = sides.map(score);
     winner = s1 > s2 ? 1 : s2 > s1 ? 2 : null;
   }
@@ -432,11 +587,17 @@ export function step(state: BattleState, dtMs: number): BattleEvent[] {
   for (const u of state.units) {
     if (!u.alive) continue;
     u.cooldowns = u.cooldowns.map((c) => Math.max(0, c - dtMs));
-    u.energy = Math.min(u.maxEnergy, u.energy + (energyRegenPerSec(u.stats.stamina) * dtMs) / 1000);
+    const boost = u.passive?.type === "energy" ? 1 + u.passive.value : 1;
+    u.energy = Math.min(u.maxEnergy, u.energy + (energyRegenPerSec(u.stats.stamina) * boost * dtMs) / 1000);
     u.mods = u.mods.filter((m) => m.untilMs > state.timeMs);
     if (u.shield > 0 && u.shieldUntil <= state.timeMs) u.shield = 0;
   }
 
+  tickOverTime(state, events);
+  if (state.timeMs - state.lastRegenMs >= 1000) {
+    state.lastRegenMs = state.timeMs;
+    runOverTime(state, events);
+  }
   runSuddenDeath(state, events);
   events.push(...runCommander(state));
   const moved = stepMovement(state, dtMs);
@@ -465,6 +626,8 @@ export function step(state: BattleState, dtMs: number): BattleEvent[] {
     const pending = state.pending.get(unit.id);
     if (pending) {
       if (pending.expiresAt < state.timeMs) {
+        state.pending.delete(unit.id);
+      } else if (pending.skillIndex > 0 && state.timeMs < unit.silenceUntil) {
         state.pending.delete(unit.id);
       } else if (
         isReady(unit, pending.skillIndex) &&

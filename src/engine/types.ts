@@ -32,6 +32,46 @@ export interface SkillEffect {
   knockback?: number;
   /** Yanks the target toward the attacker. */
   pull?: number;
+  /** Several stat changes at once (a curse that lowers defence and attack). */
+  mods?: { stat: ModStat; pct: number }[];
+  /** Extra damage against a wounded target: below this share of max health, hits deal pct% more. */
+  bonus_low_hp?: { below: number; pct: number };
+  /** Share (0-1) of the damage dealt that heals the caster. */
+  lifesteal?: number;
+  /** Damage over time: the skill's damage type, `power` per tick. */
+  dot?: { power: number; duration_ms: number; interval_ms?: number };
+  /** Healing over time on the target. */
+  hot?: { power: number; duration_ms: number; interval_ms?: number };
+  /** Strips harmful effects (debuffs, damage over time, stun) from the target. */
+  cleanse?: boolean;
+  /** Enemies hit are forced to attack the caster for this long. */
+  taunt_ms?: number;
+  /** The caster ignores this many incoming hits for up to evade_ms. */
+  evade_hits?: number;
+  evade_ms?: number;
+  /** Target can only use its basic attack for this long. */
+  silence_ms?: number;
+  /** Calls a minion to the caster's side for duration_ms. */
+  summon?: { duration_ms: number; hp_pct: number; atk_pct: number };
+}
+
+/** A rarity trait that is always on. Stronger on rarer fighters. */
+export type PassiveType = "regen" | "thorns" | "lifesteal" | "crit" | "energy" | "resist";
+export interface Passive {
+  type: PassiveType;
+  /** Fraction (0-1) of the relevant thing: crit chance, damage reflected, share healed, and so on. */
+  value: number;
+}
+
+export interface OverTime {
+  sourceId: string;
+  kind: "dot" | "hot";
+  damageType: DamageType;
+  power: number;
+  intervalMs: number;
+  nextMs: number;
+  untilMs: number;
+  slug: string;
 }
 
 export interface SkillDef {
@@ -66,6 +106,9 @@ export interface UnitInit {
   skills: SkillDef[];
   /** A player drives this unit's special skills. The engine only auto-uses its basic attack. */
   controlled?: boolean;
+  passive?: Passive;
+  /** A minion that starts out of the fight and joins when its owner summons it. */
+  summonOf?: string;
 }
 
 export interface Modifier {
@@ -121,6 +164,14 @@ export interface Unit extends UnitInit {
   focusId: string | null;
   /** AI-chosen target the unit is moving toward and attacking. */
   targetId: string | null;
+  overTime: OverTime[];
+  evadeHits: number;
+  evadeUntil: number;
+  tauntId: string | null;
+  tauntUntil: number;
+  silenceUntil: number;
+  /** A summoned minion leaves the fight at this time (0 = not a minion, or not yet summoned). */
+  expiresAt: number;
 }
 
 export type Intent =
@@ -153,6 +204,8 @@ export interface BattleState {
   nextCommanderMs: number;
   /** Battle-clock time of the last hit between fighters; AI commits to the fight when it goes quiet. */
   lastHitMs: number;
+  /** Last time once-a-second effects (regen, minion expiry) ran. */
+  lastRegenMs: number;
   queued: BattleEvent[];
   obstacles: Obstacle[];
   layout: string;
@@ -172,7 +225,7 @@ export type BattleEvent =
   | { t: number; type: "move"; units: { id: string; x: number; y: number }[] }
   | { t: number; type: "stance"; side: Side; stance: Stance }
   | { t: number; type: "cast"; actorId: string; skill: string; skillIndex: number; targetIds: string[] }
-  | { t: number; type: "damage"; sourceId: string; targetId: string; amount: number; absorbed: number; hp: number; mult?: number; ring?: boolean }
+  | { t: number; type: "damage"; sourceId: string; targetId: string; amount: number; absorbed: number; hp: number; mult?: number; ring?: boolean; dot?: boolean; crit?: boolean }
   | { t: number; type: "heal"; sourceId: string; targetId: string; amount: number; hp: number }
   | { t: number; type: "shield"; sourceId: string; targetId: string; amount: number }
   | { t: number; type: "mod"; sourceId: string; targetId: string; stat: ModStat; pct: number; durationMs: number }
@@ -182,5 +235,8 @@ export type BattleEvent =
   | { t: number; type: "interrupt"; unitId: string; id: number }
   | { t: number; type: "displace"; unitId: string; x: number; y: number; fromX: number; fromY: number }
   | { t: number; type: "phase"; phase: "warning" | "sudden_death" }
+  | { t: number; type: "evade"; sourceId: string; targetId: string }
+  | { t: number; type: "cleanse"; targetId: string }
+  | { t: number; type: "summon"; ownerId: string; unitId: string; x: number; y: number }
   | { t: number; type: "death"; unitId: string }
   | { t: number; type: "end"; winnerSide: Side | null };

@@ -9,6 +9,7 @@ export const ENERGY_PER_STAMINA = 5;
 export const ENERGY_REGEN_BASE = 2; // per second
 export const ENERGY_REGEN_PER_STAMINA = 0.2;
 export const DAMAGE_VARIANCE = 0.1; // +-10%
+export const CRIT_MULT = 1.5;
 
 /** Stat after active buffs and debuffs. */
 export function effStat(unit: Unit, stat: ModStat): number {

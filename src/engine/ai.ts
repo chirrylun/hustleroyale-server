@@ -24,6 +24,10 @@ export function chooseTarget(state: BattleState, unit: Unit): Unit | undefined {
   if (enemies.length === 0) return undefined;
   const focus = unit.focusId ? enemies.find((e) => e.id === unit.focusId) : undefined;
   if (focus) return focus;
+  if (unit.tauntId && state.timeMs < unit.tauntUntil) {
+    const taunter = enemies.find((e) => e.id === unit.tauntId);
+    if (taunter) return taunter;
+  }
 
   const stance = state.stances[unit.side];
   // Tanks screen the front line: they go for whoever is closest. Everyone else weighs more.
@@ -109,6 +113,8 @@ function worthCasting(state: BattleState, unit: Unit, skill: SkillDef, stance: S
 
   switch (skill.kind) {
     case "heal":
+      if (skill.effect.cleanse) return targets.some((a) => a.mods.some((m) => m.pct < 0) || a.overTime.some((o) => o.kind === "dot") || state.timeMs < a.silenceUntil || hpRatio(a) < below);
+      if (skill.effect.hot) return targets.some((a) => hpRatio(a) < below + 0.1 && !a.overTime.some((o) => o.slug === skill.slug));
       if (skill.targetRule === "all_allies") {
         return targets.filter((a) => hpRatio(a) < below + 0.05).length >= (stance === "defensive" ? 1 : 2);
       }
@@ -116,11 +122,15 @@ function worthCasting(state: BattleState, unit: Unit, skill: SkillDef, stance: S
     case "shield":
       return targets.some((a) => a.shield <= 0);
     case "buff": {
-      const stat = skill.effect.stat;
+      if (skill.effect.summon) return !state.units.some((u) => u.summonOf === unit.id && u.alive);
+      if (skill.effect.evade_hits) return unit.evadeHits <= 0 && enemiesOf(state, unit).some((e) => dist(e, unit) < 9);
+      const stat = skill.effect.mods?.[0]?.stat ?? skill.effect.stat;
       return !!stat && targets.some((a) => !a.mods.some((m) => m.stat === stat && m.pct > 0));
     }
     case "debuff": {
-      const stat = skill.effect.stat;
+      if (skill.effect.taunt_ms) return targets.some((e) => !(e.tauntId === unit.id && state.timeMs < e.tauntUntil));
+      if (skill.effect.silence_ms) return targets.some((e) => state.timeMs >= e.silenceUntil);
+      const stat = skill.effect.mods?.[0]?.stat ?? skill.effect.stat;
       return !!stat && targets.some((e) => !e.mods.some((m) => m.stat === stat && m.pct < 0));
     }
     case "damage":
@@ -143,7 +153,8 @@ export function aiChoose(state: BattleState, unit: Unit): number | null {
   const reserve =
     stance === "offensive" ? 0 : stance === "defensive" ? Math.max(healReserve, unit.maxEnergy * 0.1) : healReserve;
 
-  if (!unit.controlled) {
+  const silenced = state.timeMs < unit.silenceUntil;
+  if (!unit.controlled && !silenced) {
     for (let i = unit.skills.length - 1; i >= 1; i--) {
       const skill = unit.skills[i];
       if (!isReady(unit, i)) continue;
