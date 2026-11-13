@@ -60,6 +60,7 @@ export interface LoadedTeam {
 interface TemplateRow {
   name: string;
   role: Role;
+  archetype?: string;
   sprite_key: string;
   passive?: unknown;
 }
@@ -84,6 +85,7 @@ interface FighterRow {
   id: string;
   grade: string;
   level: number;
+  gender?: string;
   hp: number;
   atk: number;
   def: number;
@@ -106,7 +108,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
   const { data, error } = await supabase
     .from("fighters")
     .select(
-      "id, grade, level, hp, atk, def, spd, stamina, magic, team_slot, template:fighter_templates(name, role, sprite_key, passive), skills:fighter_skills(slot, skill:skills(slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect))",
+      "id, grade, level, gender, hp, atk, def, spd, stamina, magic, team_slot, template:fighter_templates(name, role, archetype, sprite_key, passive), skills:fighter_skills(slot, skill:skills(slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect))",
     )
     .eq("owner_id", userId)
     .not("team_slot", "is", null)
@@ -148,7 +150,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
       side: 1,
       name: template.name,
       role: template.role,
-      spriteKey: template.sprite_key,
+      spriteKey: template.archetype === "novice" ? `novice_${row.gender}` : template.sprite_key,
       grade: row.grade,
       level: row.level,
       spd: row.spd,
