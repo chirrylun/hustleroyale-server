@@ -18,7 +18,8 @@ export function registerStarterPackRoutes(app: FastifyInstance, supabase: Supaba
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         const { data: templates, error: catalogError } = await supabase
           .from("fighter_templates")
-          .select("id, role, rarity, base_hp, base_atk, base_def, base_spd, base_stamina, base_magic, supply_cap, minted");
+          .select("id, role, rarity, base_hp, base_atk, base_def, base_spd, base_stamina, base_magic, supply_cap, minted")
+          .eq("archetype", "novice"); // everyone starts as a Novice; classes are chosen at level 10
         if (catalogError || !templates) {
           req.log.error({ err: catalogError }, "starter pack: catalog read failed");
           return reply.code(500).send({ error: "catalog_unavailable" });
