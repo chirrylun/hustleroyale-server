@@ -105,6 +105,7 @@ export type StartError = "invalid_request" | "match_in_progress" | "no_team" | "
 
 export interface ClientToServerEvents {
   "solo:start": (request: unknown, ack: (response: StartAck) => void) => void;
+  "tutorial:start": (request: unknown, ack: (response: StartAck) => void) => void;
   "battle:intent": (intent: unknown) => void;
   "battle:stance": (stance: unknown) => void;
   /** Ask for the live match again (the player left the arena screen and came back, or refreshed). */

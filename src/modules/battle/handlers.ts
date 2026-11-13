@@ -8,6 +8,7 @@ import { ALLY_DODGE, DIFFICULTY_CONFIG } from "./rewards.js";
 import { SoloSession, type BattleEmitter } from "./session.js";
 import { MatchInProgressError, type BattleStore } from "./store.js";
 import { loadTeam, TeamError } from "./team.js";
+import { buildSlimes, TutorialStore, TUTORIAL_STAGES, type TutorialStage } from "./tutorial.js";
 
 /** A page refresh or a dropped connection shouldn't cost the player their match. */
 const RECONNECT_GRACE_MS = 15_000;
@@ -56,6 +57,56 @@ export class BattleManager {
     const data = await loadOpponentPool(this.deps.supabase);
     this.pool = { at: Date.now(), data };
     return data;
+  }
+
+  /** The scripted first fights against level 1 slimes (no rewards, nothing saved). */
+  async startTutorial(userId: string, raw: unknown): Promise<StartAck> {
+    const stage = (raw as { stage?: unknown } | null)?.stage;
+    if (stage !== 1 && stage !== 2) return { ok: false, error: "invalid_request" };
+    if (this.sessions.has(userId) || this.starting.has(userId)) return { ok: false, error: "match_in_progress" };
+
+    this.starting.add(userId);
+    try {
+      const all = await loadTeam(this.deps.supabase, userId, null);
+      // Stage 1 follows the best attacker, so the first win is quick and feels good.
+      const lead = all.units.find((u) => u.role === "dps") ?? all.units.find((u) => u.role === "tank") ?? all.units[0]!;
+      const solo = stage === 1;
+      const team = solo ? await loadTeam(this.deps.supabase, userId, lead.id) : all;
+      const mine = solo ? { units: team.units.filter((u) => u.id === lead.id), metas: team.metas.filter((m) => m.id === lead.id) } : team;
+      const foe = buildSlimes(TUTORIAL_STAGES[stage as TutorialStage].foes);
+      const controlledId = solo ? lead.id : null;
+
+      const seed = randomInt(0, 2 ** 32);
+      const store = new TutorialStore();
+      const matchId = await store.startMatch();
+      const state = createBattle([...mine.units, ...foe.units], seed, { autoStance: [2], dodge: { 1: ALLY_DODGE, 2: 0 } });
+      const emitter = this.emitterFor(userId);
+      const session = new SoloSession({
+        matchId, userId, difficulty: "rookie", state, metas: [...mine.metas, ...foe.metas], controlledUnitId: controlledId,
+        enemyTotalHp: foe.totalHp, store, emitter, log: this.deps.log,
+        onDone: () => { if (this.sessions.get(userId) === session) this.sessions.delete(userId); },
+      });
+      this.sessions.set(userId, session);
+      session.start();
+      return { ok: true, matchId };
+    } catch (err) {
+      if (err instanceof TeamError) return { ok: false, error: err.code };
+      this.deps.log.error({ err, userId }, "battle: could not start the tutorial fight");
+      return { ok: false, error: "server_error" };
+    } finally {
+      this.starting.delete(userId);
+    }
+  }
+
+  private emitterFor(userId: string): BattleEmitter {
+    const { io } = this.deps;
+    const target = room(userId);
+    return {
+      start: (p) => void io.to(target).emit("battle:start", p),
+      events: (p) => void io.to(target).emit("battle:events", p),
+      sync: (p) => void io.to(target).emit("battle:sync", p),
+      end: (p) => void io.to(target).emit("battle:end", p),
+    };
   }
 
   async startSolo(userId: string, raw: unknown): Promise<StartAck> {
@@ -129,6 +180,10 @@ export function registerBattleHandlers(io: GameServer, socket: GameSocket, manag
   socket.on("solo:start", async (request, ack) => {
     if (typeof ack !== "function") return;
     ack(await manager.startSolo(userId, request));
+  });
+  socket.on("tutorial:start", async (request, ack) => {
+    if (typeof ack !== "function") return;
+    ack(await manager.startTutorial(userId, request));
   });
   socket.on("battle:intent", (intent) => manager.get(userId)?.intent(intent));
   socket.on("battle:stance", (stance) => manager.get(userId)?.stance(stance));
