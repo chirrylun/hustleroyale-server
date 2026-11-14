@@ -88,6 +88,8 @@ export interface BattleStartPayload {
   tickMs: number;
   units: UnitMeta[];
   snapshot: BattleSnapshot;
+  /** True while the fight is set up but frozen, waiting for the player to press Start (tutorial fights). */
+  awaitingStart?: boolean;
 }
 
 export interface BattleEndPayload {
@@ -106,6 +108,8 @@ export type StartError = "invalid_request" | "match_in_progress" | "no_team" | "
 export interface ClientToServerEvents {
   "solo:start": (request: unknown, ack: (response: StartAck) => void) => void;
   "tutorial:start": (request: unknown, ack: (response: StartAck) => void) => void;
+  /** The player has read the instructions and pressed Start: the frozen tutorial fight begins. */
+  "tutorial:begin": (ack: (response: { ok: boolean }) => void) => void;
   "battle:intent": (intent: unknown) => void;
   "battle:stance": (stance: unknown) => void;
   /** Ask for the live match again (the player left the arena screen and came back, or refreshed). */
@@ -117,6 +121,8 @@ export interface ServerToClientEvents {
   "battle:events": (payload: { matchId: string; events: BattleEvent[] }) => void;
   "battle:sync": (payload: { matchId: string; snapshot: BattleSnapshot }) => void;
   "battle:end": (payload: BattleEndPayload) => void;
+  /** A frozen tutorial fight has started ticking. */
+  "battle:begin": (payload: { matchId: string }) => void;
 }
 
 /** Everything coming from the browser is untrusted: validate it before it reaches the engine. */

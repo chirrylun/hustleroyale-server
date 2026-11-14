@@ -16,12 +16,16 @@ import type { BattleStore } from "./store.js";
 export const TICK_MS = 100;
 /** Full state twice a second: cheap, and keeps energy and cooldown bars honest between events. */
 const SYNC_EVERY_MS = 500;
+/** A fight that is still waiting for Start after this long is dropped (the player walked away). */
+const START_WAIT_MS = 10 * 60_000;
 
 export interface BattleEmitter {
   start(payload: BattleStartPayload): void;
   events(payload: { matchId: string; events: BattleEvent[] }): void;
   sync(payload: { matchId: string; snapshot: BattleSnapshot }): void;
   end(payload: BattleEndPayload): void;
+  /** A fight that waited for the player's Start has begun. */
+  begin?(payload: { matchId: string }): void;
 }
 
 export interface SessionOptions {
@@ -52,6 +56,8 @@ export class SoloSession {
   private lastSyncMs = 0;
   private closed = false;
   private lastMoveAt = 0;
+  private started = false;
+  private waitTimer: ReturnType<typeof setTimeout> | null = null;
   /** How often each of the player's fighters used each equipped skill, so skills level up with use. */
   private readonly uses = new Map<string, number>();
 
@@ -72,11 +78,43 @@ export class SoloSession {
       tickMs: TICK_MS,
       units: this.o.metas,
       snapshot: snapshot(this.o.state) as BattleSnapshot,
+      ...(this.started ? {} : { awaitingStart: true }),
     };
   }
 
-  start(): void {
+  /** True while the fight is set up but frozen until `begin()`. */
+  get awaitingStart(): boolean {
+    return !this.started && !this.closed;
+  }
+
+  /**
+   * Tells the browser about the fight. With `awaitStart` the fight stays frozen (nothing moves, nobody
+   * acts) until `begin()`, so the player can read the instructions first.
+   */
+  start(opts: { awaitStart?: boolean } = {}): void {
+    if (opts.awaitStart) {
+      this.o.emitter.start(this.startPayload());
+      this.waitTimer = setTimeout(() => void this.abandon(), START_WAIT_MS);
+      this.waitTimer.unref?.();
+      return;
+    }
+    this.started = true;
     this.o.emitter.start(this.startPayload());
+    this.run();
+  }
+
+  /** The player pressed Start. Does nothing if the fight is already running or over. */
+  begin(): boolean {
+    if (this.started || this.closed) return false;
+    this.started = true;
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = null;
+    this.o.emitter.begin?.({ matchId: this.o.matchId });
+    this.run();
+    return true;
+  }
+
+  private run(): void {
     this.timer = setInterval(() => this.tick(), TICK_MS);
     this.timer.unref?.();
   }
@@ -84,7 +122,7 @@ export class SoloSession {
   /** A skill request for the player's one controlled fighter. Invalid input is silently ignored. */
   intent(raw: unknown): void {
     const parsed = intentSchema.safeParse(raw);
-    if (!parsed.success || !this.o.controlledUnitId || this.closed) return;
+    if (!parsed.success || !this.o.controlledUnitId || this.closed || !this.started) return;
     // Skills fire on their own: players steer (move, focus), they never trigger moves.
     if (parsed.data.type === "cast") return;
     // Movement can be streamed from held keys: cap it so a modified client can't flood the server.
@@ -99,7 +137,7 @@ export class SoloSession {
   /** Team stance, only honoured when the player isn't steering a fighter (the engine enforces that). */
   stance(raw: unknown): void {
     const parsed = stanceSchema.safeParse(raw);
-    if (!parsed.success || this.closed) return;
+    if (!parsed.success || this.closed || !this.started) return;
     submitStance(this.o.state, 1, parsed.data);
   }
 
@@ -124,6 +162,8 @@ export class SoloSession {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = null;
   }
 
   private tick(): void {

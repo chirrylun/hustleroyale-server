@@ -63,7 +63,11 @@ export class BattleManager {
   async startTutorial(userId: string, raw: unknown): Promise<StartAck> {
     const stage = (raw as { stage?: unknown } | null)?.stage;
     if (stage !== 1 && stage !== 2) return { ok: false, error: "invalid_request" };
-    if (this.sessions.has(userId) || this.starting.has(userId)) return { ok: false, error: "match_in_progress" };
+    if (this.starting.has(userId)) return { ok: false, error: "match_in_progress" };
+    // A tutorial fight still waiting for Start (the player went back and came again) is simply replaced.
+    const waiting = this.sessions.get(userId);
+    if (waiting?.awaitingStart) await waiting.abandon();
+    if (this.sessions.has(userId)) return { ok: false, error: "match_in_progress" };
 
     this.starting.add(userId);
     try {
@@ -87,7 +91,8 @@ export class BattleManager {
         onDone: () => { if (this.sessions.get(userId) === session) this.sessions.delete(userId); },
       });
       this.sessions.set(userId, session);
-      session.start();
+      // Frozen until the player has read the instructions and presses Start (see `beginTutorial`).
+      session.start({ awaitStart: true });
       return { ok: true, matchId };
     } catch (err) {
       if (err instanceof TeamError) return { ok: false, error: err.code };
@@ -98,6 +103,11 @@ export class BattleManager {
     }
   }
 
+  /** The player pressed Start on a tutorial fight: let it run. */
+  beginTutorial(userId: string): { ok: boolean } {
+    return { ok: this.sessions.get(userId)?.begin() ?? false };
+  }
+
   private emitterFor(userId: string): BattleEmitter {
     const { io } = this.deps;
     const target = room(userId);
@@ -106,13 +116,18 @@ export class BattleManager {
       events: (p) => void io.to(target).emit("battle:events", p),
       sync: (p) => void io.to(target).emit("battle:sync", p),
       end: (p) => void io.to(target).emit("battle:end", p),
+      begin: (p) => void io.to(target).emit("battle:begin", p),
     };
   }
 
   async startSolo(userId: string, raw: unknown): Promise<StartAck> {
     const parsed = startRequestSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: "invalid_request" };
-    if (this.sessions.has(userId) || this.starting.has(userId)) return { ok: false, error: "match_in_progress" };
+    if (this.starting.has(userId)) return { ok: false, error: "match_in_progress" };
+    // A frozen tutorial fight nobody pressed Start on shouldn't block a real match.
+    const waiting = this.sessions.get(userId);
+    if (waiting?.awaitingStart) await waiting.abandon();
+    if (this.sessions.has(userId)) return { ok: false, error: "match_in_progress" };
 
     this.starting.add(userId);
     try {
@@ -184,6 +199,10 @@ export function registerBattleHandlers(io: GameServer, socket: GameSocket, manag
   socket.on("tutorial:start", async (request, ack) => {
     if (typeof ack !== "function") return;
     ack(await manager.startTutorial(userId, request));
+  });
+  socket.on("tutorial:begin", (ack) => {
+    const res = manager.beginTutorial(userId);
+    if (typeof ack === "function") ack(res);
   });
   socket.on("battle:intent", (intent) => manager.get(userId)?.intent(intent));
   socket.on("battle:stance", (stance) => manager.get(userId)?.stance(stance));

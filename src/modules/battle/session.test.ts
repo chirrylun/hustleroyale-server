@@ -175,3 +175,58 @@ describe("SoloSession", () => {
     expect(driver.events.some((e) => e.type === "stance" && e.side === 1 && e.stance === "defensive")).toBe(false);
   });
 });
+
+describe("a fight that waits for Start", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("stays frozen until begin(), then runs", () => {
+    const { session, started, events, ends } = setup([...team(1, {}, true), ...team(2)], {}, "s1-dps");
+    session.start({ awaitStart: true });
+    expect(started).toHaveLength(1);
+    expect(started[0]!.awaitingStart).toBe(true);
+    expect(session.awaitingStart).toBe(true);
+
+    vi.advanceTimersByTime(30_000);
+    expect(events).toHaveLength(0);
+    expect(ends).toHaveLength(0);
+
+    expect(session.begin()).toBe(true);
+    expect(session.awaitingStart).toBe(false);
+    expect(session.startPayload().awaitingStart).toBeUndefined();
+    vi.advanceTimersByTime(5_000);
+    expect(events.length).toBeGreaterThan(0);
+    session.halt();
+  });
+
+  it("ignores moves and stances before Start", () => {
+    const { session } = setup([...team(1, {}, true), ...team(2)], {}, "s1-dps");
+    session.start({ awaitStart: true });
+    session.intent({ type: "move", x: 3, y: 3 });
+    session.stance("offensive");
+    const unit = (session as unknown as { o: { state: { units: { id: string; intent?: unknown }[] } } }).o.state.units.find((u) => u.id === "s1-dps")!;
+    expect(unit.intent).toBeFalsy();
+    session.halt();
+  });
+
+  it("begin() is a no-op when running or after being dropped", async () => {
+    const a = setup([...team(1), ...team(2)]);
+    a.session.start();
+    expect(a.session.begin()).toBe(false);
+    a.session.halt();
+
+    const b = setup([...team(1), ...team(2)]);
+    b.session.start({ awaitStart: true });
+    await b.session.abandon();
+    expect(b.session.begin()).toBe(false);
+    expect(b.done()).toBe(1);
+  });
+
+  it("is dropped if the player never presses Start", async () => {
+    const { session, done, store } = setup([...team(1), ...team(2)]);
+    session.start({ awaitStart: true });
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
+    expect(done()).toBe(1);
+    expect(store.abandoned).toEqual(["m1"]);
+  });
+});
