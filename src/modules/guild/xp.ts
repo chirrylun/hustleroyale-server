@@ -9,6 +9,7 @@
  */
 export const xpRequired = (level: number) => 30 + 22 * level + 4 * level * level;
 
+
 export const xpMultiplier = (fighterLevel: number, enemyLevel: number) =>
   enemyLevel >= fighterLevel ? Math.min(1.5, 1 + 0.1 * (enemyLevel - fighterLevel)) : Math.max(0.05, 1 + 0.18 * (enemyLevel - fighterLevel));
 
