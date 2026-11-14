@@ -31,7 +31,7 @@ export const mobBaseXp = (level: number, boss = false) => {
 export const xpAward = (baseXp: number, fighterLevel: number, enemyLevel: number, partySize = 1) => {
   const n = Math.max(1, partySize);
   const m = xpMultiplier(fighterLevel, enemyLevel);
-  return m <= 0 ? 0 : Math.max(1, Math.round((baseXp * m * (1 + 0.35 * (n - 1))) / n));
+  return m <= 0 ? 1 : Math.max(1, Math.round((baseXp * m * (1 + 0.35 * (n - 1))) / n));
 };
 
 /** What one fighter is paid for a kill on a floor; `roll` is the shared 0.8 to 1.2 roll. */

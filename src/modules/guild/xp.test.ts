@@ -4,7 +4,7 @@ import { killXp, mobBaseXp, xpAward, xpMultiplier, xpRequired } from "./xp.js";
 describe("xp", () => {
   it("costs more per level", () => expect(xpRequired(10)).toBeGreaterThan(xpRequired(9)));
 
-  it("follows the level-gap table, and pays nothing five or more levels below", () => {
+  it("follows the level-gap table, with a multiplier of 0 five or more levels below", () => {
     const table = [[3, 1.3], [2, 1.2], [1, 1.1], [0, 1], [-1, 0.8], [-2, 0.55], [-3, 0.3], [-4, 0.12], [-5, 0], [-9, 0]];
     for (const [gap, want] of table) expect(xpMultiplier(10, 10 + gap)).toBe(want);
     expect(xpMultiplier(10, 40)).toBe(1.3);
@@ -24,10 +24,10 @@ describe("xp", () => {
     expect(kills(40)).toBeGreaterThan(41); expect(kills(40)).toBeLessThan(43);
   });
 
-  it("pays nothing, not even 1 xp, for monsters five or more levels below", () => {
-    expect(killXp(20, 15, 3)).toBe(0);
-    expect(killXp(40, 1, 3)).toBe(0);
-    expect(killXp(20, 16, 3)).toBeGreaterThan(0);
+  it("pays a flat 1 xp for monsters five or more levels below", () => {
+    expect(killXp(20, 15, 3)).toBe(1);
+    expect(killXp(40, 1, 3)).toBe(1);
+    expect(killXp(20, 16, 3)).toBeGreaterThan(1);
   });
 
   it("keeps a roll of 80% to 120% around the usual amount", () => {
