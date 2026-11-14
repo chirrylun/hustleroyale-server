@@ -52,6 +52,8 @@ export class SoloSession {
   private lastSyncMs = 0;
   private closed = false;
   private lastMoveAt = 0;
+  /** How often each of the player's fighters used each equipped skill, so skills level up with use. */
+  private readonly uses = new Map<string, number>();
 
   constructor(private readonly o: SessionOptions) {
     for (const u of o.state.units) this.sideOf.set(u.id, u.side);
@@ -83,6 +85,8 @@ export class SoloSession {
   intent(raw: unknown): void {
     const parsed = intentSchema.safeParse(raw);
     if (!parsed.success || !this.o.controlledUnitId || this.closed) return;
+    // Skills fire on their own: players steer (move, focus), they never trigger moves.
+    if (parsed.data.type === "cast") return;
     // Movement can be streamed from held keys: cap it so a modified client can't flood the server.
     if (parsed.data.type === "move") {
       const now = Date.now();
@@ -142,6 +146,10 @@ export class SoloSession {
   private record(events: BattleEvent[]): void {
     for (const e of events) {
       this.events.push(e);
+      if (e.type === "cast" && e.skillIndex >= 1 && this.sideOf.get(e.actorId) === 1) {
+        const slug = this.o.state.units.find((u) => u.id === e.actorId)?.skills[e.skillIndex]?.slug;
+        if (slug) this.uses.set(`${e.actorId}|${slug}`, (this.uses.get(`${e.actorId}|${slug}`) ?? 0) + 1);
+      }
       if (e.type !== "damage") continue;
       const dealt = Math.max(0, e.amount - e.absorbed);
       const src = this.sideOf.get(e.sourceId);
@@ -174,6 +182,17 @@ export class SoloSession {
       });
     } catch (err) {
       this.o.log?.error({ err, matchId }, "battle: settle failed");
+    }
+
+    if (this.o.store.recordSkillUses) {
+      try {
+        for (const [key, count] of this.uses) {
+          const [fighterId, slug] = key.split("|") as [string, string];
+          await this.o.store.recordSkillUses(fighterId, slug, count);
+        }
+      } catch (err) {
+        this.o.log?.error({ err, matchId }, "battle: recording skill uses failed");
+      }
     }
 
     try {

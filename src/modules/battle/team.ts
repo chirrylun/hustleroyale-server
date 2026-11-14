@@ -4,6 +4,7 @@ import type { UnitMeta } from "./protocol.js";
 
 /** A skill row exactly as the `skills` table stores it. */
 export interface SkillRow {
+  id?: string;
   slug: string;
   name: string;
   kind: SkillKind;
@@ -14,6 +15,20 @@ export interface SkillRow {
   range_units: number;
   target_rule: TargetRule;
   effect: SkillEffect | null;
+}
+
+/** Skill level adds +8% effect per level; tree boosts add damage/healing and trim cooldowns. The basic attack only levels. */
+export const SKILL_LEVEL_BONUS = 0.08;
+export interface Boost { power_pct?: number; cooldown_pct?: number }
+export function tuneSkill(row: SkillRow, index: number, level: number, boosts: Boost[]): SkillRow {
+  if (index === 0) return row;
+  const power = boosts.reduce((s, b) => s + (b.power_pct ?? 0), 0);
+  const cd = Math.min(0.5, boosts.reduce((s, b) => s + (b.cooldown_pct ?? 0), 0));
+  return {
+    ...row,
+    power: Number((Number(row.power) * (1 + SKILL_LEVEL_BONUS * (Math.min(5, Math.max(1, level)) - 1)) * (1 + power)).toFixed(3)),
+    cooldown_ms: Math.round(row.cooldown_ms * (1 - cd)),
+  };
 }
 
 export function toSkillDef(row: SkillRow): SkillDef {
@@ -95,6 +110,8 @@ interface FighterRow {
   team_slot: number;
   template: TemplateRow | TemplateRow[] | null;
   skills: { slot: number; skill: SkillRow | SkillRow[] | null }[] | null;
+  learned?: { skill_id: string; level: number }[] | null;
+  nodes?: { node: { boost: Boost | null } | { boost: Boost | null }[] | null }[] | null;
 }
 
 /** PostgREST returns a single related row as an object, but be tolerant of an array of one. */
@@ -108,7 +125,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
   const { data, error } = await supabase
     .from("fighters")
     .select(
-      "id, grade, level, gender, hp, atk, def, spd, stamina, magic, team_slot, template:fighter_templates(name, role, archetype, sprite_key, passive), skills:fighter_skills(slot, skill:skills(slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect))",
+      "id, grade, level, gender, hp, atk, def, spd, stamina, magic, team_slot, template:fighter_templates(name, role, archetype, sprite_key, passive), skills:fighter_skills(slot, skill:skills(id, slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect)), learned:fighter_learned(skill_id, level), nodes:fighter_nodes(node:skill_nodes(boost))",
     )
     .eq("owner_id", userId)
     .not("team_slot", "is", null)
@@ -125,10 +142,12 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
 
   for (const row of rows) {
     const template = one(row.template);
+    const boosts = (row.nodes ?? []).map((n) => one(n.node)?.boost).filter((b): b is Boost => !!b);
     const skillRows = [...(row.skills ?? [])]
       .sort((a, b) => a.slot - b.slot)
       .map((s) => one(s.skill))
-      .filter((s): s is SkillRow => s !== null);
+      .filter((s): s is SkillRow => s !== null)
+      .map((sk, i) => tuneSkill(sk, i, row.learned?.find((l) => l.skill_id === sk.id)?.level ?? 1, boosts));
 
     // The engine treats skills[0] as the free basic attack. Refuse anything that breaks that.
     const basic = skillRows[0];

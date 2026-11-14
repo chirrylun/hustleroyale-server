@@ -32,6 +32,8 @@ export interface BattleStore {
   settleMatch(args: SettleArgs): Promise<RewardSummary>;
   saveLog(matchId: string, events: BattleEvent[]): Promise<void>;
   abandon(matchId: string): Promise<void>;
+  /** Skills level with use. Optional so tests and tutorial fights can skip it. */
+  recordSkillUses?(fighterId: string, slug: string, count: number): Promise<void>;
 }
 
 export class SupabaseBattleStore implements BattleStore {
@@ -84,6 +86,11 @@ export class SupabaseBattleStore implements BattleStore {
       capped: r.capped,
       balance: Number(r.balance),
     };
+  }
+
+  async recordSkillUses(fighterId: string, slug: string, count: number): Promise<void> {
+    const { error } = await this.supabase.rpc("record_skill_uses", { p_fighter: fighterId, p_slug: slug, p_count: count });
+    if (error) throw error;
   }
 
   async saveLog(matchId: string, events: BattleEvent[]): Promise<void> {
