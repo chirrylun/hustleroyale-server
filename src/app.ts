@@ -6,6 +6,7 @@ import type { Env } from "./config/env.js";
 import { requireUser } from "./plugins/auth.js";
 import { attachSocket } from "./plugins/socket.js";
 import { registerStarterPackRoutes } from "./modules/starter-pack/routes.js";
+import { FloorRuns } from "./modules/floor/run.js";
 import { registerFloorRoutes } from "./modules/floor/routes.js";
 import { createAdminClient } from "./plugins/supabase.js";
 
@@ -23,9 +24,10 @@ export async function buildApp(env: Env): Promise<FastifyInstance> {
   app.get("/me", { preHandler: requireUser(supabase) }, async (req) => ({ userId: req.user!.id }));
 
   registerStarterPackRoutes(app, supabase);
-  registerFloorRoutes(app, supabase);
+  const runs = new FloorRuns();
+  registerFloorRoutes(app, supabase, runs);
 
   await app.ready();
-  attachSocket(app, env, supabase);
+  attachSocket(app, env, supabase, runs);
   return app;
 }

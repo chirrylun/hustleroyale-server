@@ -5,6 +5,8 @@ import type { Env } from "../config/env.js";
 import { BattleManager, registerBattleHandlers } from "../modules/battle/handlers.js";
 import type { ClientToServerEvents, ServerToClientEvents } from "../modules/battle/protocol.js";
 import { SupabaseBattleStore } from "../modules/battle/store.js";
+import type { FloorRuns } from "../modules/floor/run.js";
+import { registerRoomNamespace } from "../modules/rooms/namespace.js";
 import { verifyAccessToken, type AuthUser } from "./auth.js";
 
 export interface GameSocketData {
@@ -18,7 +20,7 @@ export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, Reco
  * Supabase access token in `auth.token`; the verified user id is the only identity the
  * server trusts (never an id sent by the client).
  */
-export function attachSocket(app: FastifyInstance, env: Env, supabase: SupabaseClient): GameServer {
+export function attachSocket(app: FastifyInstance, env: Env, supabase: SupabaseClient, runs: FloorRuns): GameServer {
   const io: GameServer = new Server(app.server, {
     cors: { origin: env.WEB_ORIGIN, credentials: true },
     transports: ["websocket", "polling"],
@@ -38,7 +40,10 @@ export function attachSocket(app: FastifyInstance, env: Env, supabase: SupabaseC
     registerBattleHandlers(io, socket, battle);
   });
 
+  const rooms = registerRoomNamespace({ io: io as never, supabase, runs, log: app.log });
+
   app.addHook("onClose", async () => {
+    rooms.stop();
     battle.shutdown();
     await io.close();
   });

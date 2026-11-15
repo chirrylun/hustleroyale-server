@@ -27,13 +27,13 @@ export class FloorRuns {
   }
 
   /** Checks a claimed kill against the run. Returns the reason it is refused, or null when it may be paid. */
-  check(user: string, floor: number, m: KillClaim, now = Date.now()): "no_run" | "wrong_floor" | "bad_mob" | "too_fast" | "boss_done" | null {
+  check(user: string, floor: number, m: KillClaim, now = Date.now(), gap = true): "no_run" | "wrong_floor" | "bad_mob" | "too_fast" | "boss_done" | null {
     const run = this.runs.get(user);
     if (!run) return "no_run";
     if (run.floor !== floor) return "wrong_floor";
     if (!plausibleMob(floor, m)) return "bad_mob";
     if (m.boss && run.bossDown) return "boss_done";
-    if (now - run.lastKillAt < MIN_KILL_GAP_MS) return "too_fast";
+    if (gap && now - run.lastKillAt < MIN_KILL_GAP_MS) return "too_fast";
     run.lastKillAt = now;
     run.touched = now;
     return null;

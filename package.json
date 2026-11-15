@@ -8,6 +8,7 @@
     "start": "node --env-file=.env dist/index.js",
     "test": "vitest",
     "typecheck": "tsc --noEmit",
+    "sync:world": "node scripts/sync-world.mjs",
     "test:run": "vitest run",
     "gen:types": "supabase gen types typescript --project-id iezjuxjrnrxnnoffrhvc > src/db/database.types.ts"
   },
