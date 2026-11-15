@@ -22,6 +22,13 @@ export class FloorRuns {
     return run;
   }
 
+  /** Starts a run unless the player is already on this floor (the room and the REST entry both announce it). */
+  enter(user: string, floor: number, now = Date.now()): FloorRun {
+    const cur = this.runs.get(user);
+    if (cur && cur.floor === floor) { cur.touched = now; return cur; }
+    return this.start(user, floor, now);
+  }
+
   get(user: string): FloorRun | undefined {
     return this.runs.get(user);
   }

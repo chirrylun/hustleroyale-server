@@ -32,7 +32,7 @@ export function registerFloorRoutes(app: FastifyInstance, supabase: SupabaseClie
     const { data, error } = await supabase.rpc("srv_enter_floor", { p_user: req.user!.id, p_floor: body.data.floor });
     if (error) { req.log.error({ err: error }, "floor enter failed"); return reply.code(500).send({ error: "enter_failed" }); }
     if (!data) return reply.code(403).send({ error: "floor_locked" });
-    runs.start(req.user!.id, body.data.floor);
+    runs.enter(req.user!.id, body.data.floor);
     return { ok: true };
   });
 

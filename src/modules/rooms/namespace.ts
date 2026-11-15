@@ -46,7 +46,7 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
       const { error: e2 } = await supabase.rpc("srv_clear_floor", { p_user: uid, p_floor: floor });
       cleared = !e2;
     }
-    ns.to(userName(uid)).emit("k", { m: mob.id, ...res, cleared });
+    ns.to(userName(uid)).emit("k", { m: mob.id, kind: mob.kind, boss: mob.boss, ...res, cleared });
   };
 
   const manager = new RoomManager((roomId) => ({
@@ -106,7 +106,7 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
         const { data: ok, error } = await supabase.rpc("srv_enter_floor", { p_user: uid, p_floor: body.data.floor });
         if (error) throw error;
         if (!ok) return reply({ error: "floor_locked" });
-        runs.start(uid, body.data.floor);
+        runs.enter(uid, body.data.floor);
         const member = await loadMember(uid);
         if (!member) return reply({ error: "no_party" });
         const placed = manager.place(uid, body.data.floor, body.data.code);
