@@ -52,13 +52,8 @@ export function registerFloorRoutes(app: FastifyInstance, supabase: SupabaseClie
       return reply.code(/floor_locked|bad_monster|unauthorized/.test(error.message) ? 422 : 500).send({ error: "kill_failed" });
     }
     const res = data as { throttled?: boolean } & Record<string, unknown>;
-    let cleared = false;
-    if (!res.throttled && runs.paid(user, { kind, level, boss })) {
-      const { error: clearErr } = await supabase.rpc("srv_clear_floor", { p_user: user, p_floor: floor });
-      cleared = !clearErr;
-      if (clearErr) req.log.error({ err: clearErr }, "floor clear failed");
-    }
-    return { ...res, cleared };
+    if (!res.throttled) runs.paid(user, { kind, level, boss });
+    return res;
   });
 
   app.post("/floor/hp", { preHandler: auth, config: { rateLimit: { max: 40, timeWindow: "1 minute" } } }, async (req, reply) => {

@@ -1,11 +1,9 @@
-import { baseMobCount, isBossFloor, plausibleMob, type KillClaim } from "./rules.js";
+import { plausibleMob, type KillClaim } from "./rules.js";
 
 /** One player's current visit to a floor, kept in memory (a restart just means the client re-enters). */
 export interface FloorRun {
   floor: number;
-  kills: number;
   bossDown: boolean;
-  cleared: boolean;
   lastKillAt: number;
   touched: number;
 }
@@ -17,7 +15,7 @@ export class FloorRuns {
   private runs = new Map<string, FloorRun>();
 
   start(user: string, floor: number, now = Date.now()): FloorRun {
-    const run: FloorRun = { floor, kills: 0, bossDown: false, cleared: false, lastKillAt: 0, touched: now };
+    const run: FloorRun = { floor, bossDown: false, lastKillAt: 0, touched: now };
     this.runs.set(user, run);
     return run;
   }
@@ -46,18 +44,10 @@ export class FloorRuns {
     return null;
   }
 
-  /** Records a paid kill. Returns true the moment the floor becomes cleared. */
-  paid(user: string, m: KillClaim): boolean {
+  /** Records a paid kill (only bosses matter: each can fall once per visit). Floors are cleared by their quests, not by kill counts. */
+  paid(user: string, m: KillClaim) {
     const run = this.runs.get(user);
-    if (!run) return false;
-    if (m.boss) run.bossDown = true;
-    else run.kills++;
-    if (run.cleared) return false;
-    if (run.kills >= baseMobCount(run.floor) && (!isBossFloor(run.floor) || run.bossDown)) {
-      run.cleared = true;
-      return true;
-    }
-    return false;
+    if (run && m.boss) run.bossDown = true;
   }
 
   prune(now = Date.now()) {

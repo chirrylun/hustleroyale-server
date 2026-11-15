@@ -13,8 +13,6 @@ const THEME_BOSS = ["goblin", "golem", "mushroom", "direwolf"];
 
 const theme = (floor: number) => Math.min(3, Math.floor((floor - 1) / 10));
 export const isBossFloor = (floor: number) => floor % 10 === 0;
-/** How many ordinary kills clear a floor (bosses are extra). */
-export const baseMobCount = (n: number) => Math.min(9, 4 + Math.floor((((n - 1) % 10) + 1) / 2));
 
 export interface KillClaim {
   kind: string;

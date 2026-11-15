@@ -29,16 +29,4 @@ describe("FloorRuns", () => {
     r.paid("u", boss);
     expect(r.check("u", 10, boss, 5000)).toBe("boss_done");
   });
-
-  it("clears a floor once enough kills are paid (and the boss on boss floors)", () => {
-    const r = new FloorRuns();
-    const bat = { kind: "bat", level: 1, boss: false };
-    r.start("u", 1);
-    const results = [1, 2, 3, 4].map(() => r.paid("u", bat));
-    expect(results).toEqual([false, false, false, true]);
-    expect(r.paid("u", bat)).toBe(false); // already cleared
-    r.start("u", 10);
-    for (let i = 0; i < 9; i++) expect(r.paid("u", { kind: "slime", level: 10, boss: false })).toBe(false);
-    expect(r.paid("u", { kind: "goblin", level: 12, boss: true })).toBe(true);
-  });
 });

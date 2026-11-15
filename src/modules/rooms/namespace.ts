@@ -27,7 +27,7 @@ export interface RoomDeps {
 
 /**
  * The `/floor` namespace: players join a room for a floor, send their fighters' positions and the damage they deal, and
- * receive the room's mobs, the other players' fighters and what the mobs do. Entering, kills and clears are paid by
+ * receive the room's mobs, the other players' fighters and what the mobs do. Entering and kills are paid by
  * the same service-role functions as before, now fed by what the server saw in the room.
  */
 export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): RoomManager {
@@ -41,12 +41,8 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
     const { data, error } = await supabase.rpc("srv_report_floor_kill", { p_user: uid, p_floor: floor, p_kind: claim.kind, p_level: claim.level, p_boss: claim.boss });
     if (error) { log.error({ err: error }, "room kill failed"); return; }
     const res = data as { throttled?: boolean } & Record<string, unknown>;
-    let cleared = false;
-    if (!res.throttled && runs.paid(uid, claim)) {
-      const { error: e2 } = await supabase.rpc("srv_clear_floor", { p_user: uid, p_floor: floor });
-      cleared = !e2;
-    }
-    ns.to(userName(uid)).emit("k", { m: mob.id, kind: mob.kind, boss: mob.boss, ...res, cleared });
+    if (!res.throttled) runs.paid(uid, claim);
+    ns.to(userName(uid)).emit("k", { m: mob.id, kind: mob.kind, boss: mob.boss, ...res });
   };
 
   const manager = new RoomManager((roomId) => ({
