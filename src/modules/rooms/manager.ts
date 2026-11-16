@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { generateFloor, newSeed, type Floor } from "../../world/floor.js";
 import { buildNav, type Nav } from "../../world/guild-nav.js";
-import { Room, ROOM_SIZE, type Member, type RoomOut } from "./room.js";
+import { Lobby } from "./lobby.js";
+import { Room, ROOM_SIZE, type Member, type Place, type RoomOut } from "./room.js";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const newCode = () => Array.from(randomBytes(4), (b) => CODE_CHARS[b % CODE_CHARS.length]).join("");
@@ -16,10 +17,10 @@ export type OutFactory = (roomId: string) => RoomOut;
 
 /** Finds or makes the room a player should be in, and keeps every room ticking from one timer. */
 export class RoomManager {
-  private rooms = new Map<string, Room>();
-  private byFloor = new Map<number, Set<Room>>();
-  private byCode = new Map<string, Room>();
-  private where = new Map<string, Room>(); // user id -> their room
+  private rooms = new Map<string, Place>();
+  private byFloor = new Map<number, Set<Place>>();
+  private byCode = new Map<string, Place>();
+  private where = new Map<string, Place>(); // user id -> their room
   private timer: ReturnType<typeof setInterval> | null = null;
   private last = Date.now();
 
@@ -34,12 +35,14 @@ export class RoomManager {
   roomOf(uid: string) { return this.where.get(uid); }
   get roomCount() { return this.rooms.size; }
 
-  private create(floor: number, seed: number): Room {
-    const { floor: world, nav } = worldOf(floor, seed);
+  private create(floor: number, seed: number): Place {
     let code = newCode();
     while (this.byCode.has(code)) code = newCode();
     const id = `r_${randomBytes(6).toString("hex")}`;
-    const room = new Room(id, code, floor, world, nav, this.outFor(id), Date.now(), seed);
+    const out = this.outFor(id);
+    let room: Place;
+    if (floor === 0) room = new Lobby(id, code, out); // the Main Lobby: no map to build, nothing to fight
+    else { const { floor: world, nav } = worldOf(floor, seed); room = new Room(id, code, floor, world, nav, out, Date.now(), seed); }
     this.rooms.set(id, room);
     this.byCode.set(code, room);
     (this.byFloor.get(floor) ?? this.byFloor.set(floor, new Set()).get(floor)!).add(room);
@@ -47,7 +50,7 @@ export class RoomManager {
   }
 
   /** The fullest open room for this floor, so people end up together; a new one when none has space. */
-  place(uid: string, floor: number, code?: string, seed?: number): { room: Room } | { error: "no_such_room" | "room_full" | "wrong_floor" } {
+  place(uid: string, floor: number, code?: string, seed?: number): { room: Place } | { error: "no_such_room" | "room_full" | "wrong_floor" } {
     this.leave(uid);
     if (code) {
       const r = this.byCode.get(code.toUpperCase());
@@ -56,17 +59,17 @@ export class RoomManager {
       if (r.full) return { error: "room_full" };
       return { room: r };
     }
-    let best: Room | null = null;
+    let best: Place | null = null;
     for (const r of this.byFloor.get(floor) ?? []) if (!r.full && (!best || r.size > best.size)) best = r;
     return { room: best ?? this.create(floor, seed ?? newSeed()) };
   }
 
-  add(room: Room, m: Member) {
+  add(room: Place, m: Member) {
     room.join(m);
     this.where.set(m.uid, room);
   }
 
-  leave(uid: string): Room | undefined {
+  leave(uid: string): Place | undefined {
     const r = this.where.get(uid);
     if (!r) return;
     this.where.delete(uid);
@@ -74,7 +77,7 @@ export class RoomManager {
     return r;
   }
 
-  private drop(r: Room) {
+  private drop(r: Place) {
     this.rooms.delete(r.id);
     this.byCode.delete(r.code);
     this.byFloor.get(r.floor)?.delete(r);

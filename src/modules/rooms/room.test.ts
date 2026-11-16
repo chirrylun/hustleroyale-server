@@ -82,3 +82,20 @@ describe("Room", () => {
     expect(boss.max).toBeGreaterThan(solo);
   });
 });
+
+describe("Lobby", () => {
+  it("shares positions between players and fills up to its cap", async () => {
+    const { Lobby, LOBBY_SIZE } = await import("./lobby.js");
+    const sent: any[] = [];
+    const lobby = new Lobby("l", "LOBY", { ...out, toRoom: (e, p) => sent.push({ e, p }) });
+    lobby.join(member("a", 0, 0)); lobby.join(member("b", 0, 0));
+    lobby.report("a", [["a-f", 4, 6, 1, 0]]);
+    lobby.tick();
+    expect(sent.length).toBe(1);
+    expect(sent[0].p.p[0][0]).toBe("a");
+    lobby.tick();
+    expect(sent.length).toBe(1); // nothing moved since
+    for (let i = 0; i < LOBBY_SIZE; i++) lobby.join(member(`x${i}`, 0, 0));
+    expect(lobby.full).toBe(true);
+  });
+});

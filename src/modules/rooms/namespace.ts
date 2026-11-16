@@ -5,9 +5,9 @@ import { verifyAccessToken } from "../../plugins/auth.js";
 import type { FloorRuns } from "../floor/run.js";
 import type { Mob } from "./mobs.js";
 import { RoomManager } from "./manager.js";
-import { ROOM_SIZE, mobWire, type FighterInfo, type Member } from "./room.js";
+import { mobWire, type FighterInfo, type Member } from "./room.js";
 
-const joinSchema = z.object({ floor: z.number().int().min(1).max(40), code: z.string().min(4).max(8).optional(), seed: z.number().int().min(0).max(2_147_483_647).optional() });
+const joinSchema = z.object({ floor: z.number().int().min(0).max(40), code: z.string().min(4).max(8).optional(), seed: z.number().int().min(0).max(2_147_483_647).optional() });
 const updateSchema = z.object({
   p: z.array(z.tuple([z.string().max(40), z.number(), z.number(), z.number(), z.number()])).max(3).optional(),
   a: z.array(z.tuple([z.number().int(), z.string().max(40), z.number()])).max(24).optional(),
@@ -99,10 +99,12 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
       if (!body.success) return reply({ error: "bad_request" });
       try {
         leave();
-        const { data: ok, error } = await supabase.rpc("srv_enter_floor", { p_user: uid, p_floor: body.data.floor });
-        if (error) throw error;
-        if (!ok) return reply({ error: "floor_locked" });
-        runs.enter(uid, body.data.floor);
+        if (body.data.floor > 0) { // floor 0 is the lobby: nothing to unlock
+          const { data: ok, error } = await supabase.rpc("srv_enter_floor", { p_user: uid, p_floor: body.data.floor });
+          if (error) throw error;
+          if (!ok) return reply({ error: "floor_locked" });
+          runs.enter(uid, body.data.floor);
+        }
         const member = await loadMember(uid);
         if (!member) return reply({ error: "no_party" });
         const placed = manager.place(uid, body.data.floor, body.data.code, body.data.seed);
@@ -111,7 +113,7 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
         manager.add(room, member);
         socket.join(roomName(room.id));
         const snap = room.snapshot();
-        reply({ ok: true, room: room.id, code: room.code, size: ROOM_SIZE, you: uid, n: room.size, ...snap });
+        reply({ ok: true, room: room.id, code: room.code, size: room.cap, you: uid, n: room.size, ...snap });
         socket.to(roomName(room.id)).emit("joined", { player: snap.players.find((p) => p.uid === uid), n: room.size });
       } catch (e) {
         log.error({ err: e }, "room join failed");

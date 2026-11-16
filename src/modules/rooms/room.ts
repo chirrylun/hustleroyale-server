@@ -20,6 +20,24 @@ export interface RoomOut {
 
 export interface Hit { m: number; f: string; d: number }
 
+/** Anything players can be placed in: a floor room or the lobby. */
+export interface Place {
+  readonly id: string;
+  readonly code: string;
+  readonly floor: number;
+  readonly cap: number;
+  readonly size: number;
+  readonly full: boolean;
+  readonly members: Map<string, Member>;
+  expired(now: number): boolean;
+  join(m: Member, now?: number): void;
+  leave(uid: string, now?: number): void;
+  report(uid: string, p: [string, number, number, number, number][]): void;
+  attack(uid: string, hits: Hit[], now?: number): void;
+  tick(now: number, dt: number): void;
+  snapshot(): { mobs: unknown[]; players: { uid: string; name: string; fighters: unknown[] }[] };
+}
+
 const r2 = (n: number) => Math.round(n * 100) / 100;
 export const mobWire = (m: Mob) => ({ id: m.id, kind: m.kind, rarity: m.rarity, sprite: m.sprite, level: m.level, boss: m.boss, x: r2(m.x), y: r2(m.y), hp: m.hp, max: m.max, home: m.home });
 
@@ -28,7 +46,8 @@ export const mobWire = (m: Mob) => ({ id: m.id, kind: m.kind, rarity: m.rarity, 
  * in the room), moves them, lets them hit fighters, takes the damage fighters report (checked against their stats)
  * and decides when a mob dies and who is paid for it.
  */
-export class Room {
+export class Room implements Place {
+  readonly cap = ROOM_SIZE;
   readonly members = new Map<string, Member>();
   readonly mobs = new Map<number, Mob>();
   private nextId = 0;
