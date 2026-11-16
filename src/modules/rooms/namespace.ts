@@ -7,7 +7,7 @@ import type { Mob } from "./mobs.js";
 import { RoomManager } from "./manager.js";
 import { ROOM_SIZE, mobWire, type FighterInfo, type Member } from "./room.js";
 
-const joinSchema = z.object({ floor: z.number().int().min(1).max(40), code: z.string().min(4).max(8).optional() });
+const joinSchema = z.object({ floor: z.number().int().min(1).max(40), code: z.string().min(4).max(8).optional(), seed: z.number().int().min(0).max(2_147_483_647).optional() });
 const updateSchema = z.object({
   p: z.array(z.tuple([z.string().max(40), z.number(), z.number(), z.number(), z.number()])).max(3).optional(),
   a: z.array(z.tuple([z.number().int(), z.string().max(40), z.number()])).max(24).optional(),
@@ -105,7 +105,7 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
         runs.enter(uid, body.data.floor);
         const member = await loadMember(uid);
         if (!member) return reply({ error: "no_party" });
-        const placed = manager.place(uid, body.data.floor, body.data.code);
+        const placed = manager.place(uid, body.data.floor, body.data.code, body.data.seed);
         if ("error" in placed) return reply({ error: placed.error });
         const { room } = placed;
         manager.add(room, member);

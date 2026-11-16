@@ -21,6 +21,13 @@ describe("spawn plan", () => {
   });
 });
 
+describe("Room seed", () => {
+  it("tells joiners which map it runs, so they build the same one", () => {
+    const r = new Room("r", "ABCD", 3, generateFloor(3, 42), buildNav(generateFloor(3, 42).nav), out, 0, 42);
+    expect(r.snapshot().seed).toBe(42);
+  });
+});
+
 describe("Room", () => {
   const mk = () => new Room("r", "ABCD", 3, world, nav, out, 0);
 

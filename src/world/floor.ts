@@ -6,14 +6,15 @@ import swamp from "./props_swamp.json" with { type: "json" };
 import type { NavLayout } from "./guild-nav.js";
 
 /**
- * Adventure floors. A floor is generated from its number alone (same number, same map), so the server
- * and every player in a room can rebuild it without sending the map around.
+ * Adventure floors. A floor is generated from its number and a seed (same pair, same map), so the server
+ * and every player in a room can rebuild it by sharing just the seed. A new seed gives a new layout of roads,
+ * glades, ponds and trees, so no two visits are the same.
  * 40 floors, 10 per theme; the tenth floor of each theme is a boss floor.
  */
 
 export const TILE_SRC = 64; // tile size in the atlas images
-export const MAP_W = 64;
-export const MAP_H = 44;
+export const MAP_W = 96;
+export const MAP_H = 64;
 export const MAX_FLOOR = 40;
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -134,9 +135,12 @@ export function rollMob(n: number, rand: () => number): Omit<MobSpec, "id" | "x"
   return { kind, rarity, sprite: `mob_${kind}_${rarity}`, level, boss: false, ...mobStats(level, false) };
 }
 
-export function generateFloor(n: number): Floor {
+/** A seed for a new visit to a floor. */
+export const newSeed = (rand: () => number = Math.random) => 1 + Math.floor(rand() * 2_000_000_000);
+
+export function generateFloor(n: number, seed = 0): Floor {
   const theme = themeOf(n);
-  const rand = rng(n * 7919 + 13);
+  const rand = rng((n * 7919 + 13 + Math.imul(seed, 104729)) >>> 0);
   const r = (a: number, b: number) => a + rand() * (b - a);
   const pick = <T,>(a: T[]) => a[Math.floor(rand() * a.length)];
   const W = MAP_W, H = MAP_H;
@@ -145,7 +149,7 @@ export function generateFloor(n: number): Floor {
   for (let i = 0; i < variant.length; i++) variant[i] = theme.ground[Math.floor(rand() * 4)];
 
   const boss = isBossFloor(n);
-  const start: [number, number] = [5, H / 2 + r(-4, 4)];
+  const start: [number, number] = [5, H / 2 + r(-10, 10)];
   const exit: [number, number] = [W - 6, r(11, H - 11)];
 
   // Walkable ground is a network: a main road from entry to exit, side roads that end in dead-end glades, and
@@ -188,7 +192,7 @@ export function generateFloor(n: number): Floor {
   };
 
   const zones: [number, number, number][] = []; // clearings: where mobs live
-  const main = route(start, exit, 6, 9);
+  const main = route(start, exit, 10, 12);
   lay(main, r(0, 6));
   for (let i = 1; i < main.length - 1; i++) {
     const rad = r(3.2, 4);
@@ -197,8 +201,8 @@ export function generateFloor(n: number): Floor {
   }
   // Side roads, each ending in a glade worth finding.
   const glades: [number, number, number][] = [];
-  const sides = 4 + Math.floor(rand() * 2);
-  for (let k = 0, tries = 0; k < sides && tries < 80; tries++) {
+  const sides = 8 + Math.floor(rand() * 4);
+  for (let k = 0, tries = 0; k < sides && tries < 260; tries++) {
     const from = main[1 + Math.floor(rand() * (main.length - 2))];
     const up = from[1] > H / 2 ? -1 : 1;
     const to: [number, number] = [clamp(from[0] + r(-8, 8), 8, W - 9), clamp(from[1] + up * r(12, 18), 8, H - 8)];
@@ -273,7 +277,7 @@ export function generateFloor(n: number): Floor {
       for (let m = 0, cnt = 1 + Math.floor(rand() * 3); m < cnt; m++) scatter(cat, cx + r(-0.8, 0.8), cy + r(-0.5, 0.5), 1, true);
     }
   }
-  for (let k = 0, tries = 0; k < 120 && tries < 800; tries++) {
+  for (let k = 0, tries = 0; k < 260 && tries < 1800; tries++) {
     const x = r(2, W - 2), y = r(3, H - 1);
     const c = clr[Math.floor(y) * W + Math.floor(x)];
     if (c > -0.3 || c < -1.9 || cells[Math.floor(y) * W + Math.floor(x)] !== 0) continue;

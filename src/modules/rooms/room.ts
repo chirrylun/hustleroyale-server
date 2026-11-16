@@ -36,7 +36,7 @@ export class Room {
   private emptySince: number | null = null;
   private readonly baseCount: number;
 
-  constructor(readonly id: string, readonly code: string, readonly floor: number, private readonly world: Floor, private readonly nav: Nav, private readonly out: RoomOut, now = Date.now()) {
+  constructor(readonly id: string, readonly code: string, readonly floor: number, private readonly world: Floor, private readonly nav: Nav, private readonly out: RoomOut, now = Date.now(), readonly seed = 0) {
     this.baseCount = world.mobs.filter((m) => !m.boss).length || baseMobCount(floor);
     for (const s of world.mobs) this.addMob(s, now, s.boss ? 1 : 1);
     this.nextSpawn = now + 8000;
@@ -176,6 +176,7 @@ export class Room {
 
   snapshot() {
     return {
+      seed: this.seed,
       mobs: [...this.mobs.values()].map((m) => ({ ...mobWire(m), dead: m.dead })),
       players: [...this.members.values()].map((m) => ({ uid: m.uid, name: m.name, fighters: m.info.map((f) => ({ ...f, ...posOf(m, f.id) })) })),
     };
