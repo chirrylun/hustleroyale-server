@@ -3,7 +3,7 @@ import cave from "./props_cave.json" with { type: "json" };
 import grass from "./props_grass.json" with { type: "json" };
 import ice from "./props_ice.json" with { type: "json" };
 import swamp from "./props_swamp.json" with { type: "json" };
-import type { NavLayout } from "./guild-nav.js";
+import { buildNav, nearestWalkable, standable, type NavLayout } from "./guild-nav.js";
 
 /**
  * Adventure floors. A floor is generated from its number and a seed (same pair, same map), so the server
@@ -290,6 +290,10 @@ export function generateFloor(n: number, seed = 0): Floor {
   if (boss) put(theme.boss, exit[0] - 2.5, exit[1] + 1.2, rw(theme.boss) * 0.95, "boss");
   put(theme.exit, exit[0] + (boss ? 2.6 : 0), exit[1] + 0.9, rw(theme.exit) * (theme.exitCrop ?? 1) * 0.7, "exit", theme.exitCrop, [exit[0] + (boss ? 2.1 : -0.5), exit[1] + 0.3, exit[0] + (boss ? 3.1 : 0.5), exit[1] + 0.9]);
 
+  // The map's navigation, built here so mobs are only ever put on ground a fighter can really stand on.
+  const navLayout: NavLayout = { cols: W, rows: H, floor: { x0: 1.2, x1: W - 1.2, y0: 2.4, y1: H - 1 }, props: [...feet, ...liquidFeet(cells, W, H)], solid };
+  const nav = buildNav(navLayout);
+
   // Mobs live in the clearings and glades (never the one by the entry); the tenth floor has its boss in the ring by the exit.
   const f = ((n - 1) % 10) + 1;
   const tier = f <= 3 ? 0 : f <= 6 ? 1 : 2;
@@ -303,20 +307,22 @@ export function generateFloor(n: number, seed = 0): Floor {
   for (let i = 0; i < count; i++) {
     const c = homes[i % homes.length];
     let x = c[0], y = c[1];
-    for (let t = 0; t < 12; t++) {
+    let ok = false;
+    for (let t = 0; t < 40 && !ok; t++) {
       const a = rand() * Math.PI * 2, d = r(0.4, Math.max(0.6, c[2] - 1.1));
       x = c[0] + Math.cos(a) * d; y = c[1] + Math.sin(a) * d * 0.7;
-      if (clr[Math.floor(y) * W + Math.floor(x)] <= -0.5 && cells[Math.floor(y) * W + Math.floor(x)] !== 2) break;
+      ok = standable(nav, x, y);
     }
+    if (!ok) [x, y] = nearestWalkable(nav, c[0], c[1]);
     // Floor 1 always has a bat, so the first job can be done there.
     const kind = n === 1 && i === 0 ? "bat" : pick(theme.mobs);
     spawn(kind, RARITY[tier], Math.max(1, n + (i % 3 === 2 ? 1 : 0)), false, x, y);
   }
-  if (boss) spawn(theme.boss_mob, "legendary", n + 2, true, exit[0] - 2.5, exit[1] - 0.2);
+  if (boss) { const [bx, by] = nearestWalkable(nav, exit[0] - 2.5, exit[1] - 0.2); spawn(theme.boss_mob, "legendary", n + 2, true, bx, by); }
 
   return {
     n, theme, w: W, h: H, cells, variant, props, mobs, zones, start, exit,
-    nav: { cols: W, rows: H, floor: { x0: 1.2, x1: W - 1.2, y0: 2.4, y1: H - 1 }, props: [...feet, ...liquidFeet(cells, W, H)], solid },
+    nav: navLayout,
   };
 }
 

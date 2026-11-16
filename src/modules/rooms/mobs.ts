@@ -1,5 +1,5 @@
 import type { MobSpec } from "../../world/floor.js";
-import { findPath, nearestWalkable, walkable, type Nav, type Pt } from "../../world/guild-nav.js";
+import { findPath, nearestWalkable, standable, walkable, type Nav, type Pt } from "../../world/guild-nav.js";
 
 /*
  * Server-side monsters. The behaviour mirrors what used to run in the browser (FloorScreen.tsx): ambling about home,
@@ -134,7 +134,7 @@ export function pickSpawn(zones: [number, number, number][], nav: Nav, allies: A
     const z = zones[Math.floor(Math.random() * zones.length)];
     const ang = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * Math.max(0.6, z[2] - 1);
     const x = z[0] + Math.cos(ang) * d, y = z[1] + Math.sin(ang) * d * 0.7;
-    if (!walkable(nav, x, y)) continue;
+    if (!standable(nav, x, y)) continue;
     const away = n < 9 ? 10 : 6;
     if (allies.some((a) => !a.dead && dist(a, { x, y }) < away)) continue;
     if (mobs.some((f) => !f.dead && Math.hypot(f.x - x, f.y - y) < 1.6)) continue;

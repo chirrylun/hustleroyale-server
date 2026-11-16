@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { generateFloor, MAP_H, MAP_W } from "./floor.js";
-import { buildNav, findPath, nearestWalkable } from "./guild-nav.js";
+import { buildNav, findPath, nearestWalkable, standable } from "./guild-nav.js";
 
 const layout = (n: number, seed: number) => {
   const f = generateFloor(n, seed);
@@ -36,5 +36,16 @@ describe("floor generator", () => {
   it("keeps floor 1's bat and the boss on boss floors", () => {
     expect(generateFloor(1, 77).mobs.some((m) => m.kind === "bat")).toBe(true);
     expect(generateFloor(10, 77).mobs.some((m) => m.boss)).toBe(true);
+  });
+});
+
+describe("mob placement", () => {
+  it("only puts mobs where a fighter can stand", () => {
+    for (const n of [1, 5, 12, 25, 40]) {
+      for (const seed of [1, 7919, 123456]) {
+        const f = generateFloor(n, seed), nav = buildNav(f.nav);
+        for (const m of f.mobs) expect(standable(nav, m.x, m.y), `floor ${n} seed ${seed} mob ${m.id}`).toBe(true);
+      }
+    }
   });
 });
