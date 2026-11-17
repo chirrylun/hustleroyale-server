@@ -9,6 +9,9 @@ const schema = z.object({
 
 export type Env = z.infer<typeof schema>;
 
+/** WEB_ORIGIN may list several sites separated by commas (e.g. the www and bare domains); trailing slashes are ignored. */
+export const webOrigins = (env: Env): string[] => env.WEB_ORIGIN.split(",").map((o) => o.trim().replace(/\/+$/, "")).filter(Boolean);
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const parsed = schema.safeParse(source);
   if (!parsed.success) {

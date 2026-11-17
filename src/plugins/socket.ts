@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { FastifyInstance } from "fastify";
 import { Server, type Socket } from "socket.io";
-import type { Env } from "../config/env.js";
+import { webOrigins, type Env } from "../config/env.js";
 import { BattleManager, registerBattleHandlers } from "../modules/battle/handlers.js";
 import type { ClientToServerEvents, ServerToClientEvents } from "../modules/battle/protocol.js";
 import { SupabaseBattleStore } from "../modules/battle/store.js";
@@ -22,7 +22,7 @@ export type GameServer = Server<ClientToServerEvents, ServerToClientEvents, Reco
  */
 export function attachSocket(app: FastifyInstance, env: Env, supabase: SupabaseClient, runs: FloorRuns): GameServer {
   const io: GameServer = new Server(app.server, {
-    cors: { origin: env.WEB_ORIGIN, credentials: true },
+    cors: { origin: webOrigins(env), credentials: true },
     transports: ["websocket", "polling"],
   });
 
