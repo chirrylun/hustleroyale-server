@@ -12,7 +12,7 @@ const killBody = z.object({
   level: z.number().int().min(1).max(MAX_FLOOR + 2),
   boss: z.boolean().default(false),
 });
-const hpBody = z.object({ ids: z.array(z.uuid()).min(1).max(3), fracs: z.array(z.number().min(0).max(1)).min(1).max(3) });
+const hpBody = z.object({ ids: z.array(z.uuid()).min(1).max(3), fracs: z.array(z.number().transform((n) => Math.min(1, Math.max(0, n)))).min(1).max(3) }); // a hair over 1 from float drift is clamped, not refused
 
 /**
  * Floor progression is decided here, not in the browser: the client says "I entered / killed X / my health is Y",
