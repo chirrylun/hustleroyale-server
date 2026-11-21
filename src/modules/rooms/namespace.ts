@@ -6,6 +6,7 @@ import type { FloorRuns } from "../floor/run.js";
 import type { Mob } from "./mobs.js";
 import { RoomManager } from "./manager.js";
 import { mobWire, type FighterInfo, type Member } from "./room.js";
+import { GEAR_SELECT, gearBonus, type GearRows } from "../gear/bonus.js";
 
 const joinSchema = z.object({ floor: z.number().int().min(0).max(40), code: z.string().min(4).max(8).optional(), seed: z.number().int().min(0).max(2_147_483_647).optional() });
 const updateSchema = z.object({
@@ -14,7 +15,7 @@ const updateSchema = z.object({
 });
 
 interface FighterRow {
-  id: string; level: number; hp: number; atk: number; def: number; magic: number; gender: string; hp_frac: number | null;
+  id: string; level: number; hp: number; atk: number; def: number; magic: number; gender: string; hp_frac: number | null; gear?: GearRows;
   template: { name: string; role: string; archetype: string; sprite_key: string } | null;
 }
 
@@ -57,15 +58,15 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
 
   const loadMember = async (uid: string): Promise<Member | null> => {
     const [{ data: rows }, { data: prof }] = await Promise.all([
-      supabase.from("fighters").select("id, level, hp, atk, def, magic, gender, hp_frac, template:fighter_templates(name, role, archetype, sprite_key)").eq("owner_id", uid).gt("team_slot", 0).order("team_slot"),
+      supabase.from("fighters").select("id, level, hp, atk, def, magic, gender, hp_frac, template:fighter_templates(name, role, archetype, sprite_key), " + GEAR_SELECT).eq("owner_id", uid).gt("team_slot", 0).order("team_slot"),
       supabase.from("profiles").select("username").eq("id", uid).maybeSingle(),
     ]);
     const list = ((rows ?? []) as unknown as FighterRow[]).filter((r) => r.template);
     if (!list.length) return null;
-    const info: FighterInfo[] = list.map((r) => ({
-      id: r.id, name: r.template!.name, role: r.template!.role, level: r.level, max: r.hp, atk: r.atk, magic: r.magic, def: r.def, frac: r.hp_frac ?? 1,
+    const info: FighterInfo[] = list.map((r) => { const gb = gearBonus(r.gear); return {
+      id: r.id, name: r.template!.name, role: r.template!.role, level: r.level, max: r.hp + gb.hp, atk: r.atk + gb.atk, magic: r.magic + gb.magic, def: r.def + gb.def, frac: r.hp_frac ?? 1,
       sprite: r.template!.archetype === "novice" ? `novice_${r.gender}` : r.template!.sprite_key,
-    }));
+    }; });
     return {
       uid, name: (prof?.username as string | undefined) ?? "Player", info, buckets: new Map(), dirty: false,
       fighters: new Map(info.map((f) => [f.id, { id: f.id, uid, x: 0, y: 0, max: f.max, def: f.def, frac: 1, dead: true }])), // not a target until it reports in

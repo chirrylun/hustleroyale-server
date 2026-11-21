@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { minionInit, type DamageType, type Passive, type Role, type SkillDef, type SkillEffect, type SkillKind, type TargetRule, type UnitInit } from "../../engine/index.js";
 import type { UnitMeta } from "./protocol.js";
+import { GEAR_SELECT, gearBonus, type GearRows } from "../gear/bonus.js";
 
 /** A skill row exactly as the `skills` table stores it. */
 export interface SkillRow {
@@ -111,6 +112,7 @@ interface FighterRow {
   template: TemplateRow | TemplateRow[] | null;
   skills: { slot: number; skill: SkillRow | SkillRow[] | null }[] | null;
   learned?: { skill_id: string; level: number }[] | null;
+  gear?: GearRows;
   nodes?: { node: { boost: Boost | null } | { boost: Boost | null }[] | null }[] | null;
 }
 
@@ -125,7 +127,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
   const { data, error } = await supabase
     .from("fighters")
     .select(
-      "id, grade, level, gender, hp, atk, def, spd, stamina, magic, team_slot, template:fighter_templates(name, role, archetype, sprite_key, passive), skills:fighter_skills(slot, skill:skills(id, slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect)), learned:fighter_learned(skill_id, level), nodes:fighter_nodes(node:skill_nodes(boost))",
+      "id, grade, level, gender, hp, atk, def, spd, stamina, magic, team_slot, template:fighter_templates(name, role, archetype, sprite_key, passive), skills:fighter_skills(slot, skill:skills(id, slug, name, kind, damage_type, power, cooldown_ms, stamina_cost, range_units, target_rule, effect)), learned:fighter_learned(skill_id, level), nodes:fighter_nodes(node:skill_nodes(boost)), " + GEAR_SELECT,
     )
     .eq("owner_id", userId)
     .not("team_slot", "is", null)
@@ -153,13 +155,14 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
     const basic = skillRows[0];
     if (!template || !basic || basic.stamina_cost !== 0 || basic.kind !== "damage") throw new TeamError("invalid_team");
 
+    const gb = gearBonus(row.gear);
     const controlled = row.id === controlledFighterId;
     units.push({
       id: row.id,
       side: 1,
       name: template.name,
       role: template.role,
-      stats: { hp: row.hp, atk: row.atk, def: row.def, spd: row.spd, stamina: row.stamina, magic: row.magic },
+      stats: { hp: row.hp + gb.hp, atk: row.atk + gb.atk, def: row.def + gb.def, spd: row.spd + gb.spd, stamina: row.stamina, magic: row.magic + gb.magic },
       skills: skillRows.map(toSkillDef),
       controlled,
       passive: toPassive(template.passive),
