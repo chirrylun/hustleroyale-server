@@ -1,4 +1,4 @@
-import type { MobSpec } from "../../world/floor.js";
+import { hitDamage, type MobSpec } from "../../world/floor.js";
 import { findPath, nearestWalkable, standable, walkable, type Nav, type Pt } from "../../world/guild-nav.js";
 
 /*
@@ -32,7 +32,7 @@ export const bossScale = (players: number) => 1 + 0.6 * (Math.max(1, players) - 
 export interface Ally {
   id: string; uid: string;
   x: number; y: number;
-  max: number; def: number;
+  max: number; def: number; level?: number;
   /** 0-1 health as the owner last reported it (and as hits since then have lowered it). */
   frac: number;
   dead: boolean;
@@ -122,7 +122,7 @@ export function tickMob(m: Mob, dt: number, now: number, ctx: MobCtx) {
     if (m.cd <= 0) {
       m.cd = 1.3;
       m.swings++; m.dirty = true;
-      ctx.hit(m, target, Math.max(2, Math.round((m.atk - target.def * 0.45) * (0.9 + Math.random() * 0.2))));
+      ctx.hit(m, target, hitDamage(m.atk, target.def, target.level ?? m.level, 0.9 + Math.random() * 0.2));
     }
   }
 }

@@ -28,6 +28,8 @@ export interface Nav {
   blocked: Uint8Array;
   /** 1 for cells in the main open area; closed-off nooks between furniture are left out so nobody gets sent there. */
   main: Uint8Array;
+  /** 1 for cells in the main area that also have breathing room on every side: wide enough that a party can really walk up to them. Mobs only live and wander here. */
+  roomy: Uint8Array;
 }
 
 /** How far a fighter's body reaches around its feet (tiles). Keeps shoulders from clipping into furniture. */
@@ -37,20 +39,34 @@ export function buildNav(layout: NavLayout, res = 2): Nav {
   const feet = layout.props.flatMap((p) => (p.foot ? [[p.foot[0] - BODY, p.foot[1] - BODY, p.foot[2] + BODY, p.foot[3] + BODY]] : []));
   const w = layout.cols * res;
   const h = layout.rows * res;
-  const nav: Nav = { floor: layout.floor, solid: layout.solid, cols: layout.cols, feet, res, w, h, blocked: new Uint8Array(w * h), main: new Uint8Array(w * h) };
+  const nav: Nav = { floor: layout.floor, solid: layout.solid, cols: layout.cols, feet, res, w, h, blocked: new Uint8Array(w * h), main: new Uint8Array(w * h), roomy: new Uint8Array(w * h) };
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) nav.blocked[j * w + i] = walkable(nav, (i + 0.5) / res, (j + 0.5) / res) ? 0 : 1;
   }
   markMainArea(nav);
+  // Cells with a free cell on all four sides, joined to the biggest such area: pockets and one-cell gaps between trees drop out.
+  const eroded = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const k = j * w + i;
+    eroded[k] = nav.blocked[k] || i === 0 || j === 0 || i === w - 1 || j === h - 1 || nav.blocked[k - 1] || nav.blocked[k + 1] || nav.blocked[k - w] || nav.blocked[k + w] ? 1 : 0;
+  }
+  const core = largestOpen(w, h, eroded);
+  let any = false;
+  for (let k = 0; k < core.length; k++) { nav.roomy[k] = core[k] && nav.main[k] ? 1 : 0; if (nav.roomy[k]) any = true; }
+  if (!any) nav.roomy.set(nav.main);
   return nav;
 }
 
 /** Flood-fills the free cells and keeps the biggest connected area. */
 function markMainArea(nav: Nav) {
-  const seen = new Int32Array(nav.w * nav.h).fill(-1);
+  nav.main = largestOpen(nav.w, nav.h, nav.blocked);
+}
+
+function largestOpen(w: number, h: number, blocked: Uint8Array): Uint8Array {
+  const seen = new Int32Array(w * h).fill(-1);
   const sizes: number[] = [];
   for (let start = 0; start < seen.length; start++) {
-    if (nav.blocked[start] || seen[start] !== -1) continue;
+    if (blocked[start] || seen[start] !== -1) continue;
     const id = sizes.length;
     let size = 0;
     const stack = [start];
@@ -58,18 +74,21 @@ function markMainArea(nav: Nav) {
     while (stack.length) {
       const k = stack.pop()!;
       size++;
-      const i = k % nav.w, j = (k - i) / nav.w;
+      const i = k % w, j = (k - i) / w;
       for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const ni = i + di, nj = j + dj;
-        if (ni < 0 || nj < 0 || ni >= nav.w || nj >= nav.h) continue;
-        const nk = nj * nav.w + ni;
-        if (!nav.blocked[nk] && seen[nk] === -1) { seen[nk] = id; stack.push(nk); }
+        if (ni < 0 || nj < 0 || ni >= w || nj >= h) continue;
+        const nk = nj * w + ni;
+        if (!blocked[nk] && seen[nk] === -1) { seen[nk] = id; stack.push(nk); }
       }
     }
     sizes.push(size);
   }
+  const out = new Uint8Array(w * h);
+  if (!sizes.length) return out;
   const best = sizes.indexOf(Math.max(...sizes));
-  for (let k = 0; k < seen.length; k++) nav.main[k] = seen[k] === best ? 1 : 0;
+  for (let k = 0; k < seen.length; k++) out[k] = seen[k] === best ? 1 : 0;
+  return out;
 }
 
 /** Can a fighter stand here? */
@@ -89,6 +108,26 @@ export function standable(nav: Nav, x: number, y: number): boolean {
   if (!walkable(nav, x, y)) return false;
   const i = cellOf(nav, x), j = cellOf(nav, y);
   return i >= 0 && j >= 0 && i < nav.w && j < nav.h && nav.main[j * nav.w + i] === 1;
+}
+
+/** Open ground a party can properly reach: where mobs may stand and wander. */
+export function roomy(nav: Nav, x: number, y: number): boolean {
+  if (!walkable(nav, x, y)) return false;
+  const i = cellOf(nav, x), j = cellOf(nav, y);
+  return i >= 0 && j >= 0 && i < nav.w && j < nav.h && nav.roomy[j * nav.w + i] === 1;
+}
+
+/** The closest roomy spot to a point (the point itself if it already is). */
+export function nearestRoomy(nav: Nav, x: number, y: number): Pt {
+  if (roomy(nav, x, y)) return [x, y];
+  let best: Pt | null = null, bestD = Infinity;
+  for (let j = 0; j < nav.h; j++) for (let i = 0; i < nav.w; i++) {
+    if (!nav.roomy[j * nav.w + i]) continue;
+    const cx = (i + 0.5) / nav.res, cy = (j + 0.5) / nav.res;
+    const d = (cx - x) ** 2 + (cy - y) ** 2;
+    if (d < bestD) { bestD = d; best = [cx, cy]; }
+  }
+  return best ?? nearestWalkable(nav, x, y);
 }
 
 /** The closest standable spot to a tapped point (the point itself if it is already free). */

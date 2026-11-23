@@ -3,7 +3,7 @@ import cave from "./props_cave.json" with { type: "json" };
 import grass from "./props_grass.json" with { type: "json" };
 import ice from "./props_ice.json" with { type: "json" };
 import swamp from "./props_swamp.json" with { type: "json" };
-import { buildNav, nearestWalkable, standable, type NavLayout } from "./guild-nav.js";
+import { buildNav, nearestRoomy, roomy, type NavLayout } from "./guild-nav.js";
 
 /**
  * Adventure floors. A floor is generated from its number and a seed (same pair, same map), so the server
@@ -115,12 +115,16 @@ function rng(seed: number) {
   };
 }
 
-/** Mob numbers by level. Placeholder balance: tune with play. */
+/** Mob numbers by level. Fighters grow +9% HP and +7% ATK/DEF per level (database), so these keep pace with them. */
 export const mobStats = (level: number, boss: boolean) => ({
-  hp: Math.round((40 + 22 * level) * (boss ? 6 : 1)),
-  atk: Math.round((7 + 3.2 * level) * (boss ? 1.4 : 1)),
-  def: Math.round(2 + 1.2 * level),
+  hp: Math.round((30 + 12 * level) * (boss ? 6 : 1)),
+  atk: Math.round((5 + 1.6 * level) * (boss ? 1.4 : 1)),
+  def: Math.round(2 + 0.9 * level),
 });
+/** Share of a hit that gets through `def` on something of `level` (same curve for fighters and mobs, so defence never stops mattering or becomes immunity). */
+export const hitShare = (def: number, level: number) => { const k = 30 + 5 * Math.max(1, level); return k / (k + Math.max(0, def)); };
+/** One hit: attack power through the defender's armour, never below 2. `roll` is 0.9 to 1.1. */
+export const hitDamage = (power: number, def: number, defLevel: number, roll = 1) => Math.max(2, Math.round(power * hitShare(def, defLevel) * roll));
 
 /** How many ordinary mobs a floor holds for one player; also how many kills open the portal. Bosses are extra. */
 export const baseMobCount = (n: number) => Math.min(9, 4 + Math.floor((((n - 1) % 10) + 1) / 2));
@@ -311,14 +315,14 @@ export function generateFloor(n: number, seed = 0): Floor {
     for (let t = 0; t < 40 && !ok; t++) {
       const a = rand() * Math.PI * 2, d = r(0.4, Math.max(0.6, c[2] - 1.1));
       x = c[0] + Math.cos(a) * d; y = c[1] + Math.sin(a) * d * 0.7;
-      ok = standable(nav, x, y);
+      ok = roomy(nav, x, y);
     }
-    if (!ok) [x, y] = nearestWalkable(nav, c[0], c[1]);
+    if (!ok) [x, y] = nearestRoomy(nav, c[0], c[1]);
     // Floor 1 always has a bat, so the first job can be done there.
     const kind = n === 1 && i === 0 ? "bat" : pick(theme.mobs);
     spawn(kind, RARITY[tier], Math.max(1, n + (i % 3 === 2 ? 1 : 0)), false, x, y);
   }
-  if (boss) { const [bx, by] = nearestWalkable(nav, exit[0] - 2.5, exit[1] - 0.2); spawn(theme.boss_mob, "legendary", n + 2, true, bx, by); }
+  if (boss) { const [bx, by] = nearestRoomy(nav, exit[0] - 2.5, exit[1] - 0.2); spawn(theme.boss_mob, "legendary", n + 2, true, bx, by); }
 
   return {
     n, theme, w: W, h: H, cells, variant, props, mobs, zones, start, exit,

@@ -69,7 +69,7 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
     }; });
     return {
       uid, name: (prof?.username as string | undefined) ?? "Player", info, buckets: new Map(), dirty: false,
-      fighters: new Map(info.map((f) => [f.id, { id: f.id, uid, x: 0, y: 0, max: f.max, def: f.def, frac: 1, dead: true }])), // not a target until it reports in
+      fighters: new Map(info.map((f) => [f.id, { id: f.id, uid, x: 0, y: 0, max: f.max, def: f.def, level: f.level, frac: 1, dead: true }])), // not a target until it reports in
     };
   };
 
