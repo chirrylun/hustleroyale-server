@@ -6,6 +6,7 @@ import type { FloorRuns } from "../floor/run.js";
 import type { Mob } from "./mobs.js";
 import { RoomManager } from "./manager.js";
 import { mobWire, type FighterInfo, type Member } from "./room.js";
+import { lookKey } from "../../world/look.js";
 import { GEAR_SELECT, gearBonus, type GearRows } from "../gear/bonus.js";
 
 const joinSchema = z.object({ floor: z.number().int().min(0).max(40), code: z.string().min(4).max(8).optional(), seed: z.number().int().min(0).max(2_147_483_647).optional() });
@@ -65,7 +66,7 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
     if (!list.length) return null;
     const info: FighterInfo[] = list.map((r) => { const gb = gearBonus(r.gear); return {
       id: r.id, name: r.template!.name, role: r.template!.role, level: r.level, max: r.hp + gb.hp, atk: r.atk + gb.atk, magic: r.magic + gb.magic, def: r.def + gb.def, frac: r.hp_frac ?? 1,
-      sprite: r.template!.archetype === "novice" ? `novice_${r.gender}` : r.template!.sprite_key,
+      sprite: lookKey(r.gender, r.gear),
     }; });
     return {
       uid, name: (prof?.username as string | undefined) ?? "Player", info, buckets: new Map(), dirty: false,

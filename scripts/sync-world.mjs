@@ -18,4 +18,8 @@ floor = floor
   .replace(/from "\.\/(props_\w+)\.json"/g, 'from "./$1.json" with { type: "json" }')
   .replace('from "../guild-nav"', 'from "./guild-nav.js"');
 writeFileSync(`${out}/floor.ts`, banner + floor);
+copyFileSync(`${web}/src/lib/gearArt.json`, `${out}/gearArt.json`);
+let look = readFileSync(`${web}/src/lib/look.ts`, "utf8");
+look = look.replace('from "./gearArt.json"', 'from "./gearArt.json" with { type: "json" }');
+writeFileSync(`${out}/look.ts`, banner + look);
 console.log("world synced from", web);

@@ -1,3 +1,4 @@
+import { lookKey } from "../../world/look.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { minionInit, type DamageType, type Passive, type Role, type SkillDef, type SkillEffect, type SkillKind, type TargetRule, type UnitInit } from "../../engine/index.js";
 import type { UnitMeta } from "./protocol.js";
@@ -172,7 +173,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
       side: 1,
       name: template.name,
       role: template.role,
-      spriteKey: template.archetype === "novice" ? `novice_${row.gender}` : template.sprite_key,
+      spriteKey: lookKey(row.gender, row.gear),
       grade: row.grade,
       level: row.level,
       spd: row.spd,
