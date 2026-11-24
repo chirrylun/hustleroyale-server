@@ -25,5 +25,5 @@ export function plausibleMob(floor: number, m: KillClaim): boolean {
   if (!Number.isInteger(floor) || floor < 1 || floor > MAX_FLOOR || !Number.isInteger(m.level)) return false;
   const t = theme(floor);
   if (m.boss) return isBossFloor(floor) && m.kind === THEME_BOSS[t] && m.level === floor + 2;
-  return THEME_MOBS[t].includes(m.kind) && m.level >= floor && m.level <= floor + 1;
+  return THEME_MOBS[t].includes(m.kind) && m.level >= floor && m.level <= floor + 3;
 }

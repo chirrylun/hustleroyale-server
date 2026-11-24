@@ -130,12 +130,16 @@ export const hitDamage = (power: number, def: number, defLevel: number, roll = 1
 export const baseMobCount = (n: number) => Math.min(9, 4 + Math.floor((((n - 1) % 10) + 1) / 2));
 
 /** A fresh ordinary mob for floor `n` (kind, level and stats), for the spawner. */
+/** How many levels above its floor an ordinary mob can be. */
+export const MOB_LEAD = 3;
+
 export function rollMob(n: number, rand: () => number): Omit<MobSpec, "id" | "x" | "y"> {
   const theme = themeOf(n);
   const f = ((n - 1) % 10) + 1;
   const rarity = RARITY[f <= 3 ? 0 : f <= 6 ? 1 : 2];
   const kind = theme.mobs[Math.floor(rand() * theme.mobs.length)];
-  const level = Math.max(1, n + (rand() < 0.33 ? 1 : 0));
+  const r = rand(); // mostly the floor's level, but a quarter are a level up, one in ten two up and one in twenty three up: a real fight for a party at the floor's level
+  const level = Math.max(1, n + (r < 0.05 ? 3 : r < 0.15 ? 2 : r < 0.4 ? 1 : 0));
   return { kind, rarity, sprite: `mob_${kind}_${rarity}`, level, boss: false, ...mobStats(level, false) };
 }
 
