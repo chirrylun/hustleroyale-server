@@ -49,7 +49,7 @@ export class RoomManager {
     return room;
   }
 
-  /** The fullest open room for this floor, so people end up together; a new one when none has space. */
+  /** The fullest open room for this floor, so people end up together; a new one when none has space. Boss floors are always private (join by code). */
   place(uid: string, floor: number, code?: string, seed?: number): { room: Place } | { error: "no_such_room" | "room_full" | "wrong_floor" } {
     this.leave(uid);
     if (code) {
@@ -59,6 +59,8 @@ export class RoomManager {
       if (r.full) return { error: "room_full" };
       return { room: r };
     }
+    // Boss floors are never matched with strangers: each visit gets its own room, which friends can join with its code.
+    if (floor > 0 && floor % 10 === 0) return { room: this.create(floor, seed ?? newSeed()) };
     let best: Place | null = null;
     for (const r of this.byFloor.get(floor) ?? []) if (!r.full && (!best || r.size > best.size)) best = r;
     return { room: best ?? this.create(floor, seed ?? newSeed()) };
