@@ -29,4 +29,12 @@ describe("FloorRuns", () => {
     r.paid("u", boss);
     expect(r.check("u", 10, boss, 5000)).toBe("boss_done");
   });
+  it("only lets a miniboss in on its floors, at floor+3", () => {
+    expect(plausibleMob(4, { kind: "slimeking", level: 7, boss: false, mini: true })).toBe(true);
+    expect(plausibleMob(4, { kind: "slimeking", level: 4, boss: false, mini: true })).toBe(false);
+    expect(plausibleMob(14, { kind: "slimeking", level: 17, boss: false, mini: true })).toBe(false);
+    expect(plausibleMob(14, { kind: "broodmother", level: 17, boss: false, mini: true })).toBe(true);
+    expect(plausibleMob(10, { kind: "slimeking", level: 13, boss: false, mini: true })).toBe(false);
+    expect(plausibleMob(4, { kind: "slimeking", level: 7, boss: false })).toBe(false); // not a normal mob
+  });
 });

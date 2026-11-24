@@ -1,5 +1,5 @@
 import type { Floor, MobSpec } from "../../world/floor.js";
-import { baseMobCount, rollMob } from "../../world/floor.js";
+import { baseMobCount, rollMob, miniFor, miniStats, MINI_APPEAR_MS, MINI_COOLDOWN_MS, MINI_LEVEL } from "../../world/floor.js";
 import type { Nav } from "../../world/guild-nav.js";
 import { bossScale, makeMob, pickSpawn, spawnPlan, tickMob, type Ally, type Mob } from "./mobs.js";
 
@@ -39,7 +39,7 @@ export interface Place {
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
-export const mobWire = (m: Mob) => ({ id: m.id, kind: m.kind, rarity: m.rarity, sprite: m.sprite, level: m.level, boss: m.boss, x: r2(m.x), y: r2(m.y), hp: m.hp, max: m.max, home: m.home });
+export const mobWire = (m: Mob) => ({ id: m.id, kind: m.kind, rarity: m.rarity, sprite: m.sprite, level: m.level, boss: m.boss, mini: m.mini, x: r2(m.x), y: r2(m.y), hp: m.hp, max: m.max, home: m.home });
 
 /**
  * One shared copy of a floor. The server owns the monsters here: it spawns them (more of them the more players are
@@ -52,6 +52,7 @@ export class Room implements Place {
   readonly mobs = new Map<number, Mob>();
   private nextId = 0;
   private nextSpawn = 0;
+  private nextMini = 0;
   private emptySince: number | null = null;
   private readonly baseCount: number;
 
@@ -59,7 +60,10 @@ export class Room implements Place {
     this.baseCount = world.mobs.filter((m) => !m.boss).length || baseMobCount(floor);
     for (const s of world.mobs) this.addMob(s, now, s.boss ? 1 : 1);
     this.nextSpawn = now + 8000;
+    this.nextMini = now + this.miniGap();
   }
+
+  private miniGap() { return MINI_APPEAR_MS[0] + Math.random() * (MINI_APPEAR_MS[1] - MINI_APPEAR_MS[0]); }
 
   get size() { return this.members.size; }
   get full() { return this.members.size >= ROOM_SIZE; }
@@ -73,7 +77,7 @@ export class Room implements Place {
   }
 
   private addMob(s: Omit<MobSpec, "id">, now: number, hpMul = 1, home?: [number, number, number]): Mob {
-    const m = makeMob(this.nextId++, s, this.nav, home ?? this.zoneOf(s.x, s.y), now, s.boss ? bossScale(Math.max(1, this.size)) * hpMul : hpMul);
+    const m = makeMob(this.nextId++, s, this.nav, home ?? this.zoneOf(s.x, s.y), now, s.boss || s.mini ? bossScale(Math.max(1, this.size)) * hpMul : hpMul);
     this.mobs.set(m.id, m);
     return m;
   }
@@ -96,7 +100,7 @@ export class Room implements Place {
   /** Boss health follows the head count, keeping the share of health it has left. */
   private rescaleBosses() {
     for (const b of this.mobs.values()) {
-      if (!b.boss || b.dead) continue;
+      if (!(b.boss || b.mini) || b.dead) continue;
       const frac = b.hp / b.max;
       b.max = Math.round(b.baseMax * bossScale(Math.max(1, this.size)));
       b.hp = Math.max(1, Math.round(b.max * frac));
@@ -142,7 +146,8 @@ export class Room implements Place {
   private die(mob: Mob, now: number) {
     mob.dead = true; mob.deadAt = now; mob.path = []; mob.target = null; mob.dirty = true;
     for (const uid of mob.credit) if (this.members.has(uid)) this.out.kill(uid, mob);
-    if (!mob.boss) this.nextSpawn = Math.max(this.nextSpawn, now + this.plan().afterKillMs[0] + Math.random() * (this.plan().afterKillMs[1] - this.plan().afterKillMs[0]));
+    if (mob.mini) this.nextMini = now + MINI_COOLDOWN_MS + this.miniGap();
+    if (!mob.boss && !mob.mini) this.nextSpawn = Math.max(this.nextSpawn, now + this.plan().afterKillMs[0] + Math.random() * (this.plan().afterKillMs[1] - this.plan().afterKillMs[0]));
   }
 
   plan() { return spawnPlan(this.baseCount, this.size); }
@@ -166,7 +171,7 @@ export class Room implements Place {
     for (const id of gone) this.mobs.delete(id);
 
     const add: ReturnType<typeof mobWire>[] = [];
-    const live = [...this.mobs.values()].filter((m) => !m.dead && !m.boss).length;
+    const live = [...this.mobs.values()].filter((m) => !m.dead && !m.boss && !m.mini).length;
     const plan = this.plan();
     if (live < plan.cap && now >= this.nextSpawn) {
       const spot = pickSpawn(this.world.zones as [number, number, number][], this.nav, allies, [...this.mobs.values()]);
@@ -176,6 +181,21 @@ export class Room implements Place {
         add.push(mobWire(m));
         this.nextSpawn = now + plan.gapMs[0] + Math.random() * (plan.gapMs[1] - plan.gapMs[0]);
       } else this.nextSpawn = now + 2000;
+    }
+
+    const mini = miniFor(this.floor);
+    if (mini && now >= this.nextMini) {
+      this.nextMini = now + 30_000; // retried soon if there was no room to place it; set properly once it is killed
+      if (![...this.mobs.values()].some((m) => m.mini && !m.dead)) {
+        const spot = pickSpawn(this.world.zones as [number, number, number][], this.nav, allies, [...this.mobs.values()]);
+        if (spot) {
+          const level = this.floor + MINI_LEVEL;
+          const m = this.addMob({ kind: mini.kind, rarity: "mini", sprite: `mob_${mini.kind}_mini`, level, boss: false, mini: true, ...miniStats(level), x: spot.at[0], y: spot.at[1] }, now, 1, spot.home);
+          add.push(mobWire(m));
+          this.nextMini = now + 24 * 3600_000; // until it dies
+          this.out.toRoom("mini", { kind: mini.kind });
+        }
+      }
     }
 
     const upd: [number, number, number, number, number][] = [], dead: number[] = [];

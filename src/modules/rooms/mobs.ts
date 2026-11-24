@@ -10,11 +10,11 @@ const MOB_SPEED = 2.3;
 const LEASH = 14;
 const WANDER: Record<string, { speed: number; rest: [number, number] }> = {
   slime: { speed: 0.7, rest: [2, 6] }, bat: { speed: 1.7, rest: [0.4, 1.6] }, mushroom: { speed: 0.6, rest: [3, 7] },
-  goblin: { speed: 1.1, rest: [1.5, 5] }, direwolf: { speed: 1.5, rest: [1, 4] }, golem: { speed: 0.5, rest: [3, 8] },
+  goblin: { speed: 1.1, rest: [1.5, 5] }, boar: { speed: 1.3, rest: [1, 4] }, weaver: { speed: 1.0, rest: [1.5, 5] }, wisp: { speed: 1.2, rest: [0.6, 2.5] }, beetle: { speed: 0.6, rest: [3, 7] }, slimeking: { speed: 0.8, rest: [2, 5] }, broodmother: { speed: 0.9, rest: [2, 5] }, rimewarden: { speed: 0.9, rest: [2, 5] }, direwolf: { speed: 1.5, rest: [1, 4] }, golem: { speed: 0.5, rest: [3, 8] },
 };
-const TEMPER: Record<string, number> = { slime: 0.5, mushroom: 0.5, golem: 0.8, goblin: 1.1, bat: 1.2, direwolf: 1.4 };
+const TEMPER: Record<string, number> = { slime: 0.5, mushroom: 0.5, golem: 0.8, goblin: 1.1, bat: 1.2, direwolf: 1.4, boar: 1.2, weaver: 0.9, wisp: 1.0, beetle: 0.6, slimeking: 1, broodmother: 1, rimewarden: 1 };
 export const aggroRange = (floor: number, kind: string, boss: boolean) => {
-  if (boss) return 6;
+  if (boss || kind === "slimeking" || kind === "broodmother" || kind === "rimewarden") return 6;
   const base = floor <= 2 ? 0 : floor <= 10 ? 1.5 + (floor - 3) * 0.35 : Math.min(6.5, 4 + (floor - 11) * 0.1);
   return base * (TEMPER[kind] ?? 1);
 };
@@ -39,7 +39,7 @@ export interface Ally {
 }
 
 export interface Mob {
-  id: number; kind: string; rarity: string; sprite: string; level: number; boss: boolean;
+  id: number; kind: string; rarity: string; sprite: string; level: number; boss: boolean; mini: boolean;
   x: number; y: number; hp: number; max: number; atk: number; def: number;
   home: [number, number, number];
   baseMax: number;
@@ -60,7 +60,7 @@ export function makeMob(id: number, s: Omit<MobSpec, "id">, nav: Nav, home: [num
   const [x, y] = nearestWalkable(nav, s.x, s.y);
   const hp = Math.round(s.hp * hpMul);
   return {
-    id, kind: s.kind, rarity: s.rarity, sprite: s.sprite, level: s.level, boss: s.boss, x, y, hp, max: hp, baseMax: s.hp, atk: s.atk, def: s.def,
+    id, kind: s.kind, rarity: s.rarity, sprite: s.sprite, level: s.level, boss: s.boss, mini: !!s.mini, x, y, hp, max: hp, baseMax: s.hp, atk: s.atk, def: s.def,
     home: s.boss ? [x, y, 1.5] : home, target: null, provoked: false, path: [], repath: 0, cd: 1, wanderAt: now + rnd(0, 3000), speedMul: rnd(0.9, 1.1),
     born: now, dead: false, deadAt: 0, credit: new Set(), dirty: true, swings: 0,
   };

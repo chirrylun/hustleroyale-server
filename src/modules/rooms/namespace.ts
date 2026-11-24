@@ -38,13 +38,13 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
   const userName = (uid: string) => `u:${uid}`;
 
   const pay = async (uid: string, floor: number, mob: Mob) => {
-    const claim = { kind: mob.kind, level: mob.level, boss: mob.boss };
+    const claim = { kind: mob.kind, level: mob.level, boss: mob.boss, mini: mob.mini };
     if (runs.check(uid, floor, claim, Date.now(), false)) return; // not a run this player is on: no pay
-    const { data, error } = await supabase.rpc("srv_report_floor_kill", { p_user: uid, p_floor: floor, p_kind: claim.kind, p_level: claim.level, p_boss: claim.boss });
+    const { data, error } = await supabase.rpc("srv_report_floor_kill", { p_user: uid, p_floor: floor, p_kind: claim.kind, p_level: claim.level, p_boss: claim.boss, p_mini: !!claim.mini });
     if (error) { log.error({ err: error }, "room kill failed"); return; }
     const res = data as { throttled?: boolean } & Record<string, unknown>;
     if (!res.throttled) runs.paid(uid, claim);
-    ns.to(userName(uid)).emit("k", { m: mob.id, kind: mob.kind, boss: mob.boss, ...res });
+    ns.to(userName(uid)).emit("k", { m: mob.id, kind: mob.kind, boss: mob.boss, mini: mob.mini, ...res });
   };
 
   const manager = new RoomManager((roomId) => ({

@@ -43,29 +43,40 @@ export const THEMES: Record<ThemeId, Theme> = {
   grass: {
     id: "grass", name: "Whispering Meadows", atlas: atlas("grass", 1024, 381, grass),
     big: [0, 1, 2, 3, 4], mid: [6, 7, 8, 10, 11, 5, 12, 13], flat: [9, 14, 15, 16, 17],
-    entry: 24, exit: 25, boss: 27, chest: 28, mobs: ["slime", "bat", "mushroom"], boss_mob: "goblin", rows: [0, 1, 4], ground: [3, 4, 6, 7],
+    entry: 24, exit: 25, boss: 27, chest: 28, mobs: ["slime", "bat", "mushroom", "boar"], boss_mob: "goblin", rows: [0, 1, 4], ground: [3, 4, 6, 7],
   },
   cave: {
     id: "cave", name: "Hollow Depths", atlas: atlas("cave", 1024, 385, cave),
     big: [0, 1, 2, 3], mid: [4, 5, 6, 7, 8, 9, 18, 19, 14], flat: [15, 16, 11],
-    entry: 22, exit: 23, boss: 25, chest: 26, mobs: ["bat", "slime", "goblin"], boss_mob: "golem", rows: [0, 1, 4], ground: [2, 4, 7, 0],
+    entry: 22, exit: 23, boss: 25, chest: 26, mobs: ["bat", "slime", "goblin", "weaver", "beetle"], boss_mob: "golem", rows: [0, 1, 4], ground: [2, 4, 7, 0],
   },
   swamp: {
     id: "swamp", name: "Murkwater Marsh", atlas: atlas("swamp", 1024, 385, swamp),
     big: [0, 1, 2, 3, 4], mid: [5, 10, 12, 16, 22], flat: [6, 7, 8, 9, 14, 15, 20],
-    entry: 24, exit: 25, boss: 27, chest: 28, mobs: ["slime", "mushroom", "goblin"], boss_mob: "mushroom", rows: [0, 1, 4], ground: [3, 0, 1, 6],
+    entry: 24, exit: 25, boss: 27, chest: 28, mobs: ["slime", "mushroom", "goblin", "boar"], boss_mob: "mushroom", rows: [0, 1, 4], ground: [3, 0, 1, 6],
   },
   ice: {
     id: "ice", name: "Frostbite Reach", atlas: atlas("ice", 1024, 385, ice),
     big: [0, 1, 2, 3, 4], mid: [5, 6, 7, 8, 9, 11, 13], flat: [12, 15],
-    entry: 25, exit: 26, boss: 27, chest: 28, exitCrop: 0.5, mobs: ["slime", "direwolf", "golem"], boss_mob: "direwolf", rows: [0, 1, 4], ground: [5, 0, 1, 2],
+    entry: 25, exit: 26, boss: 27, chest: 28, exitCrop: 0.5, mobs: ["slime", "direwolf", "golem", "wisp", "beetle"], boss_mob: "direwolf", rows: [0, 1, 4], ground: [5, 0, 1, 2],
   },
 };
 
 const ORDER: ThemeId[] = ["grass", "cave", "swamp", "ice"];
 export const themeOf = (floor: number) => THEMES[ORDER[Math.min(3, Math.floor((floor - 1) / 10))]];
 export const isBossFloor = (floor: number) => floor % 10 === 0;
-const RARITY = ["common", "uncommon", "rare", "legendary"] as const;
+const RARITY = ["common", "uncommon", "rare", "legendary", "mini"] as const;
+
+/** Special mobs: rare, much tougher, and hunted by the job board's special quests. Never on boss floors. Mirrored in the server's rules.ts and the `minibosses` table. */
+export const MINIBOSSES = [
+  { kind: "slimeking", name: "Slime King", from: 3, to: 9 }, { kind: "slimeking", name: "Slime King", from: 21, to: 29 },
+  { kind: "broodmother", name: "Broodmother", from: 11, to: 19 }, { kind: "rimewarden", name: "Rimewarden", from: 31, to: 39 },
+] as const;
+export const miniFor = (floor: number) => MINIBOSSES.find((m) => floor >= m.from && floor <= m.to) ?? null;
+export const MINI_LEVEL = 3; // over the floor
+export const MINI_APPEAR_MS: [number, number] = [3 * 60_000, 8 * 60_000];
+export const MINI_COOLDOWN_MS = 15 * 60_000;
+export const miniStats = (level: number) => { const b = mobStats(level, false); return { hp: Math.round(b.hp * 4.5), atk: Math.round(b.atk * 1.3), def: b.def }; };
 
 export interface PropSpec {
   id: number;
@@ -83,6 +94,7 @@ export interface MobSpec {
   sprite: string;
   level: number;
   boss: boolean;
+  mini?: boolean;
   x: number; y: number;
   hp: number; atk: number; def: number;
 }
