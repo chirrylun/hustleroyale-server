@@ -156,7 +156,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
     const basic = skillRows[0];
     if (!template || !basic || basic.stamina_cost !== 0 || basic.kind !== "damage") throw new TeamError("invalid_team");
 
-    const gb = gearBonus(row.gear);
+    const gb = gearBonus(row.gear, row);
     const controlled = row.id === controlledFighterId;
     units.push({
       id: row.id,

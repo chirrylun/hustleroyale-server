@@ -37,7 +37,7 @@ describe("Room", () => {
     for (const [i, u] of ["a", "b", "c"].entries()) r.join(member(u, world.start[0] + i, world.start[1]), 0);
     let now = 0;
     for (let i = 0; i < 6000; i++) { now += 100; r.tick(now, 0.1); }
-    const live = [...r.mobs.values()].filter((m) => !m.dead && !m.boss).length;
+    const live = [...r.mobs.values()].filter((m) => !m.dead && !m.boss && !m.mini && !m.minion).length;
     expect(live).toBe(r.plan().cap);
     expect(live).toBeGreaterThan(base);
   });

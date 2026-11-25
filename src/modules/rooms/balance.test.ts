@@ -8,12 +8,12 @@ const classes = { tank: [127, 9, 14], recruit: [110, 10, 12], thief: [80, 13, 5]
 describe("same-level mob balance", () => {
   for (const L of [1, 5, 10, 20, 30, 40]) {
     for (const [name, [hp, atk, def]] of Object.entries(classes)) {
-      it(`${name} L${L}: ungeared: survives 5+ mob hits, kills in 18 or fewer`, () => {
+      it(`${name} L${L}: ungeared: survives 4+ mob hits, kills in 25 or fewer`, () => {
         const m = mobStats(L, false);
         const dies = at(hp, L, 0.09) / hitDamage(m.atk, at(def, L, 0.07), L);
         const kills = m.hp / hitDamage(at(atk, L, 0.07), m.def, L);
-        expect(dies).toBeGreaterThanOrEqual(5); // gear and skills carry the later levels from here
-        expect(kills).toBeLessThanOrEqual(18);
+        expect(dies).toBeGreaterThanOrEqual(4); // mobs hit hard on purpose; gear, skills, the tank and the healer carry the rest
+        expect(kills).toBeLessThanOrEqual(25);
       });
     }
   }

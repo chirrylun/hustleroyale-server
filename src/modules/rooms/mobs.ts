@@ -36,6 +36,9 @@ export interface Ally {
   /** 0-1 health as the owner last reported it (and as hits since then have lowered it). */
   frac: number;
   dead: boolean;
+  role?: string;
+  /** Poison or bleeding: loses `pct` of max health at each `next`, until `until`. */
+  dot?: { until: number; pct: number; next: number };
 }
 
 export interface Mob {
@@ -51,6 +54,13 @@ export interface Mob {
   dirty: boolean;
   /** Bumped on each swing so clients can play the attack animation. */
   swings: number;
+  /** Pack id: packmates are pulled into the fight together. */
+  grp?: number;
+  /** Split off a slime when it died: pays nothing and does not count towards the floor. */
+  minion: boolean;
+  /** Who it likes to hit: the nearest fighter, or the softest one (healers, then damage dealers). */
+  pref: "near" | "soft";
+  swapAt: number; hits: number; chargeAt: number; dashUntil: number; charged: boolean;
 }
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
@@ -63,6 +73,7 @@ export function makeMob(id: number, s: Omit<MobSpec, "id">, nav: Nav, home: [num
     id, kind: s.kind, rarity: s.rarity, sprite: s.sprite, level: s.level, boss: s.boss, mini: !!s.mini, x, y, hp, max: hp, baseMax: s.hp, atk: s.atk, def: s.def,
     home: s.boss ? [x, y, 1.5] : home, target: null, provoked: false, path: [], repath: 0, cd: 1, wanderAt: now + rnd(0, 3000), speedMul: rnd(0.9, 1.1),
     born: now, dead: false, deadAt: 0, credit: new Set(), dirty: true, swings: 0,
+    grp: s.grp, minion: false, pref: Math.random() < 0.45 ? "soft" : "near", swapAt: now + rnd(3000, 5000), hits: 0, chargeAt: now + rnd(2000, 5000), dashUntil: 0, charged: false,
   };
 }
 
@@ -72,6 +83,22 @@ export interface MobCtx {
   allies: Ally[];
   /** A mob swings at an ally for `dmg`. */
   hit(m: Mob, a: Ally, dmg: number): void;
+  /** Packmates of `m` join the fight against `target`. */
+  alert(m: Mob, target: Ally): void;
+}
+
+/** Lower is more tempting. Bats hunt healers, boars the most hurt, and some mobs go for the soft targets instead of the nearest. */
+function score(m: Mob, a: Ally): number {
+  const d = dist(m, a);
+  if (m.kind === "bat") return d - (a.role === "healer" ? 3 : a.role === "dps" ? 1 : 0);
+  if (m.kind === "boar") return d + a.frac * 3;
+  if (m.pref === "soft") return d - (a.role === "healer" ? 1.8 : a.role === "dps" ? 1 : 0);
+  return d;
+}
+function pickTarget(m: Mob, live: Ally[], reach: number): Ally | null {
+  let best: Ally | null = null, bs = Infinity;
+  for (const a of live) { if (dist(m, a) > reach) continue; const s = score(m, a); if (s < bs) { bs = s; best = a; } }
+  return best;
 }
 
 function step(m: Mob, dt: number, speed: number): boolean {
@@ -94,9 +121,15 @@ export function tickMob(m: Mob, dt: number, now: number, ctx: MobCtx) {
     target = null; m.target = null; m.provoked = false; m.path = []; m.wanderAt = now + 600; // gives up and heads home
   }
   if (!target) {
-    let best = m.provoked ? Infinity : aggroRange(ctx.floor, m.kind, m.boss);
-    for (const a of live) { const d = dist(m, a); if (d < best) { best = d; target = a; } }
-    if (target) { m.target = target.id; m.path = []; }
+    target = pickTarget(m, live, m.provoked ? Infinity : aggroRange(ctx.floor, m.kind, m.boss));
+    if (target) { m.target = target.id; m.path = []; if (m.grp !== undefined) ctx.alert(m, target); }
+  } else if (now >= m.swapAt) {
+    // From time to time a mob changes its mind about whom to chase.
+    m.swapAt = now + rnd(3000, 5000);
+    if (m.pref === "soft" || m.kind === "bat" || m.kind === "boar") {
+      const t = pickTarget(m, live, 5);
+      if (t && t.id !== target.id && score(m, t) < score(m, target) - 1) { target = t; m.target = t.id; m.path = []; }
+    }
   }
   if (!target) {
     const w = WANDER[m.kind] ?? WANDER.slime;
@@ -116,13 +149,22 @@ export function tickMob(m: Mob, dt: number, now: number, ctx: MobCtx) {
       m.path = findPath(ctx.nav, [m.x, m.y], [target.x + Math.cos(ang) * 0.95, target.y + Math.sin(ang) * 0.95]);
       m.repath = 0.6;
     }
-    step(m, dt, MOB_SPEED * m.speedMul);
+    // A boar lowers its head and charges from a few tiles away, then hits hard.
+    const d = dist(m, target);
+    if (m.kind === "boar" && now >= m.chargeAt && d > 2.2 / ZOOM && d < 5.5 / ZOOM) { m.dashUntil = now + 700; m.chargeAt = now + 6000; m.charged = true; m.repath = 0; }
+    step(m, dt, MOB_SPEED * m.speedMul * (now < m.dashUntil ? 2.6 : 1));
   } else {
     m.path = [];
     if (m.cd <= 0) {
       m.cd = 1.3;
-      m.swings++; m.dirty = true;
-      ctx.hit(m, target, hitDamage(m.atk, target.def, target.level ?? m.level, 0.9 + Math.random() * 0.2));
+      m.swings++; m.hits++; m.dirty = true;
+      let mult = 0.9 + Math.random() * 0.2;
+      if (m.charged) { mult *= 1.7; m.charged = false; } // the charge lands
+      if (m.kind === "golem" && m.hits % 4 === 0) { mult *= 2.2; m.cd = 2.2; } // a slow, heavy blow every fourth swing
+      ctx.hit(m, target, hitDamage(m.atk, target.def, target.level ?? m.level, mult));
+      // Poison from mushrooms, bleeding from wolves: a little health lost each second.
+      if (m.kind === "mushroom") target.dot = { until: now + 5000, pct: 0.025, next: now + 1000 };
+      else if (m.kind === "direwolf" && Math.random() < 0.35) target.dot = { until: now + 4000, pct: 0.02, next: now + 1000 };
     }
   }
 }

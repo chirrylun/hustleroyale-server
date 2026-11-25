@@ -1,6 +1,6 @@
 import type { Floor, MobSpec } from "../../world/floor.js";
-import { baseMobCount, rollMob, miniFor, miniStats, MINI_APPEAR_MS, MINI_COOLDOWN_MS, MINI_LEVEL } from "../../world/floor.js";
-import type { Nav } from "../../world/guild-nav.js";
+import { baseMobCount, rollGroup, miniFor, miniStats, MINI_APPEAR_MS, MINI_COOLDOWN_MS, MINI_LEVEL } from "../../world/floor.js";
+import { nearestWalkable, type Nav } from "../../world/guild-nav.js";
 import { bossScale, makeMob, pickSpawn, spawnPlan, tickMob, type Ally, type Mob } from "./mobs.js";
 
 export const ROOM_SIZE = 4;
@@ -53,6 +53,9 @@ export class Room implements Place {
   private nextId = 0;
   private nextSpawn = 0;
   private nextMini = 0;
+  private nextGrp = 1000;
+  /** Mobs created outside the spawn step (slime splits), sent with the next snapshot. */
+  private added: ReturnType<typeof mobWire>[] = [];
   private emptySince: number | null = null;
   private readonly baseCount: number;
 
@@ -138,14 +141,34 @@ export class Room implements Place {
       mob.credit.add(uid);
       mob.provoked = true;
       if (!mob.target || !this.allies().some((x) => x.id === mob.target && !x.dead)) { mob.target = a.id; mob.path = []; }
+      this.alert(mob, a);
       mob.dirty = true;
       if (mob.hp <= 0) this.die(mob, now);
     }
   }
 
+  /** Packmates (same pack id) pile in on whoever the mob is fighting. */
+  private alert(m: Mob, target: Ally) {
+    if (m.grp === undefined) return;
+    for (const o of this.mobs.values()) {
+      if (o === m || o.dead || o.grp !== m.grp || o.target) continue;
+      o.target = target.id; o.provoked = true; o.path = []; o.dirty = true;
+    }
+  }
+
   private die(mob: Mob, now: number) {
     mob.dead = true; mob.deadAt = now; mob.path = []; mob.target = null; mob.dirty = true;
-    for (const uid of mob.credit) if (this.members.has(uid)) this.out.kill(uid, mob);
+    if (!mob.minion) for (const uid of mob.credit) if (this.members.has(uid)) this.out.kill(uid, mob);
+    // A slime splits into two little ones that fight on (and pay nothing).
+    if (mob.kind === "slime" && !mob.minion && !mob.boss && !mob.mini) {
+      for (let i = 0; i < 2; i++) {
+        const [x, y] = nearestWalkable(this.nav, mob.x + (i ? 0.5 : -0.5), mob.y + 0.2);
+        const kid = this.addMob({ kind: "slime", rarity: mob.rarity as MobSpec["rarity"], sprite: mob.sprite, level: Math.max(1, mob.level - 2), boss: false, grp: mob.grp, hp: Math.max(5, Math.round(mob.baseMax * 0.3)), atk: Math.max(2, Math.round(mob.atk * 0.6)), def: mob.def, x, y }, now, 1, mob.home);
+        kid.minion = true; kid.provoked = true; kid.born = now - 900;
+        this.added.push(mobWire(kid));
+      }
+    }
+    if (mob.minion) return;
     if (mob.mini) this.nextMini = now + MINI_COOLDOWN_MS + this.miniGap();
     if (!mob.boss && !mob.mini) this.nextSpawn = Math.max(this.nextSpawn, now + this.plan().afterKillMs[0] + Math.random() * (this.plan().afterKillMs[1] - this.plan().afterKillMs[0]));
   }
@@ -162,7 +185,21 @@ export class Room implements Place {
         if (a.frac <= 0) a.dead = true;
         this.out.toRoom("hit", { m: m.id, f: a.id, d: dmg });
       },
+      alert: (m: Mob, t: Ally) => this.alert(m, t),
     };
+    // Poison and bleeding tick once a second.
+    for (const a of allies) {
+      const d = a.dot;
+      if (!d || a.dead) { if (d) a.dot = undefined; continue; }
+      if (now >= d.next) {
+        d.next += 1000;
+        const dmg = Math.max(1, Math.round(a.max * d.pct));
+        a.frac = Math.max(0, a.frac - dmg / a.max);
+        if (a.frac <= 0) a.dead = true;
+        this.out.toRoom("hit", { m: -1, f: a.id, d: dmg });
+      }
+      if (now >= d.until) a.dot = undefined;
+    }
     const gone: number[] = [];
     for (const m of this.mobs.values()) {
       if (m.dead) { if (now - m.deadAt > CORPSE_MS) gone.push(m.id); continue; }
@@ -170,15 +207,19 @@ export class Room implements Place {
     }
     for (const id of gone) this.mobs.delete(id);
 
-    const add: ReturnType<typeof mobWire>[] = [];
-    const live = [...this.mobs.values()].filter((m) => !m.dead && !m.boss && !m.mini).length;
+    const add: ReturnType<typeof mobWire>[] = this.added;
+    this.added = [];
+    const live = [...this.mobs.values()].filter((m) => !m.dead && !m.boss && !m.mini && !m.minion).length;
     const plan = this.plan();
     if (live < plan.cap && now >= this.nextSpawn) {
       const spot = pickSpawn(this.world.zones as [number, number, number][], this.nav, allies, [...this.mobs.values()]);
       if (spot) {
-        const roll = rollSpec(this.floor);
-        const m = this.addMob({ ...roll, x: spot.at[0], y: spot.at[1] }, now, 1, spot.home);
-        add.push(mobWire(m));
+        // One mob, or a pack of them, never past the floor cap.
+        const group = rollGroup(this.floor, Math.random, this.nextGrp++).slice(0, Math.max(1, plan.cap - live));
+        group.forEach((roll, i) => {
+          const [x, y] = i === 0 ? spot.at : nearestWalkable(this.nav, spot.at[0] + (Math.random() - 0.5) * 2.4, spot.at[1] + (Math.random() - 0.5) * 1.6);
+          add.push(mobWire(this.addMob({ ...roll, x, y }, now, 1, spot.home)));
+        });
         this.nextSpawn = now + plan.gapMs[0] + Math.random() * (plan.gapMs[1] - plan.gapMs[0]);
       } else this.nextSpawn = now + 2000;
     }
@@ -224,4 +265,3 @@ export class Room implements Place {
 
 const posOf = (m: Member, id: string) => { const a = m.fighters.get(id); return a ? { x: r2(a.x), y: r2(a.y), frac: r2(a.frac), dead: a.dead } : {}; };
 
-const rollSpec = (floor: number) => rollMob(floor, Math.random);

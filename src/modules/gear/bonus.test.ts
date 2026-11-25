@@ -10,6 +10,13 @@ describe("gearBonus", () => {
   });
 });
 
+describe("gear cap", () => {
+  it("keeps gear to at most 40% of a stat", () => {
+    const big = { base_slug: "sword", rank: 4, atk: 500, def: 500, magic: 0, hp: 500, spd: 0 };
+    expect(gearBonus([{ slot: "weapon", item: big }], { hp: 100, atk: 30, def: 20, magic: 10, spd: 10 })).toEqual({ atk: 20, def: 13, magic: 0, hp: 66, spd: 0 });
+  });
+});
+
 import { lookKey } from "../../world/look.js";
 describe("lookKey", () => {
   it("is the plain novice unless armour with art is worn", () => {

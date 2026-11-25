@@ -95,6 +95,8 @@ export interface MobSpec {
   level: number;
   boss: boolean;
   mini?: boolean;
+  /** Mobs with the same pack id fight together. */
+  grp?: number;
   x: number; y: number;
   hp: number; atk: number; def: number;
 }
@@ -127,12 +129,28 @@ function rng(seed: number) {
   };
 }
 
-/** Mob numbers by level. Fighters grow +9% HP and +7% ATK/DEF per level (database), so these keep pace with them. */
-export const mobStats = (level: number, boss: boolean) => ({
-  hp: Math.round((30 + 12 * level) * (boss ? 6 : 1)),
-  atk: Math.round((5 + 1.6 * level) * (boss ? 1.4 : 1)),
-  def: Math.round(2 + 0.9 * level),
-});
+/** Mob numbers by level. Fighters grow +9% HP and +7% ATK/DEF per level (database); mobs run a little ahead so a same-level fight costs real health. */
+/** Every mob balance knob in one place (the server gets this file by sync). */
+export const TUNE = {
+  hpBase: 30, hpPerLevel: 16, atkBase: 5, atkPerLevel: 2.1, defBase: 2, defPerLevel: 0.9,
+  /** Members of a pack are a little weaker one by one, because there are several of them. */
+  packHp: 0.6, packAtk: 0.8,
+  /** Gear can add at most this share of a stat to what a fighter has without it (0.667 means gear is at most 40% of the total). */
+  gearCap: 2 / 3,
+};
+/** Each kind's own build: [hp, attack, defence] multipliers. Bosses and special mobs ignore these. */
+export const KIND_MUL: Record<string, [number, number, number]> = {
+  slime: [1.3, 0.7, 1], mushroom: [0.9, 0.8, 1], bat: [0.6, 1, 0.7], direwolf: [1, 1.15, 1], golem: [1.6, 1.2, 1.5], boar: [1.8, 1.4, 1.1],
+};
+/** Kinds that live in packs of 2-4 and pull each other into a fight. Bats and boars are loners. */
+export const PACK_KINDS = ["slime", "goblin", "direwolf"];
+export const packSize = (floor: number, rand: () => number) => (floor <= 2 ? 2 : floor <= 6 ? 2 + (rand() < 0.4 ? 1 : 0) : 2 + Math.floor(rand() * 3));
+export const mobStats = (level: number, boss: boolean, kind?: string, pack = false) => {
+  const m = !boss && kind ? KIND_MUL[kind] ?? [1, 1, 1] : [1, 1, 1];
+  const hp = (TUNE.hpBase + TUNE.hpPerLevel * level) * (boss ? 6 : 1) * m[0] * (pack ? TUNE.packHp : 1);
+  const atk = (TUNE.atkBase + TUNE.atkPerLevel * level) * (boss ? 1.4 : 1) * m[1] * (pack ? TUNE.packAtk : 1);
+  return { hp: Math.round(hp), atk: Math.round(atk), def: Math.round((TUNE.defBase + TUNE.defPerLevel * level) * m[2]) };
+};
 /** Share of a hit that gets through `def` on something of `level` (same curve for fighters and mobs, so defence never stops mattering or becomes immunity). */
 export const hitShare = (def: number, level: number) => { const k = 30 + 5 * Math.max(1, level); return k / (k + Math.max(0, def)); };
 /** One hit: attack power through the defender's armour, never below 2. `roll` is 0.9 to 1.1. */
@@ -152,7 +170,15 @@ export function rollMob(n: number, rand: () => number): Omit<MobSpec, "id" | "x"
   const kind = theme.mobs[Math.floor(rand() * theme.mobs.length)];
   const r = rand(); // mostly the floor's level, but a quarter are a level up, one in ten two up and one in twenty three up: a real fight for a party at the floor's level
   const level = Math.max(1, n + (r < 0.05 ? 3 : r < 0.15 ? 2 : r < 0.4 ? 1 : 0));
-  return { kind, rarity, sprite: `mob_${kind}_${rarity}`, level, boss: false, ...mobStats(level, false) };
+  return { kind, rarity, sprite: `mob_${kind}_${rarity}`, level, boss: false, ...mobStats(level, false, kind) };
+}
+
+/** A new arrival for the spawner: one mob, or a whole pack (same kind and level, sharing a `grp` id) for the pack kinds. */
+export function rollGroup(n: number, rand: () => number, grp: number): Omit<MobSpec, "id" | "x" | "y">[] {
+  const one = rollMob(n, rand);
+  if (!PACK_KINDS.includes(one.kind)) return [one];
+  const size = packSize(n, rand);
+  return Array.from({ length: size }, () => ({ ...one, grp, ...mobStats(one.level, false, one.kind, true) }));
 }
 
 /** A seed for a new visit to a floor. */
@@ -318,13 +344,14 @@ export function generateFloor(n: number, seed = 0): Floor {
   const f = ((n - 1) % 10) + 1;
   const tier = f <= 3 ? 0 : f <= 6 ? 1 : 2;
   const mobs: MobSpec[] = [];
-  const spawn = (kind: string, rarity: MobSpec["rarity"], level: number, isBoss: boolean, x: number, y: number) => {
-    const s = mobStats(level, isBoss);
-    mobs.push({ id: mobs.length, kind, rarity, sprite: `mob_${kind}_${rarity}`, level, boss: isBoss, x, y, ...s });
+  let grpId = 1;
+  const spawn = (kind: string, rarity: MobSpec["rarity"], level: number, isBoss: boolean, x: number, y: number, grp?: number) => {
+    const s = mobStats(level, isBoss, kind, grp !== undefined);
+    mobs.push({ id: mobs.length, kind, rarity, sprite: `mob_${kind}_${rarity}`, level, boss: isBoss, ...(grp !== undefined ? { grp } : {}), x, y, ...s });
   };
   const homes = zones.filter((z) => Math.hypot(z[0] - start[0], z[1] - start[1]) > 12);
   const count = Math.max(baseMobCount(n), Math.round(homes.length * 1.2));
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; mobs.length < count; i++) {
     const c = homes[i % homes.length];
     let x = c[0], y = c[1];
     let ok = false;
@@ -336,7 +363,15 @@ export function generateFloor(n: number, seed = 0): Floor {
     if (!ok) [x, y] = nearestRoomy(nav, c[0], c[1]);
     // Floor 1 always has a bat, so the first job can be done there.
     const kind = n === 1 && i === 0 ? "bat" : pick(theme.mobs);
-    spawn(kind, RARITY[tier], Math.max(1, n + (i % 3 === 2 ? 1 : 0)), false, x, y);
+    const lvl = Math.max(1, n + (i % 3 === 2 ? 1 : 0));
+    if (PACK_KINDS.includes(kind) && !(n === 1 && i === 0)) {
+      // A pack: the same kind side by side, all pulled in when one is.
+      const g = grpId++, size = packSize(n, rand);
+      for (let k = 0; k < size; k++) {
+        const [px, py] = k === 0 ? [x, y] : nearestRoomy(nav, x + r(-1.4, 1.4), y + r(-1, 1));
+        spawn(kind, RARITY[tier], lvl, false, px, py, g);
+      }
+    } else spawn(kind, RARITY[tier], lvl, false, x, y);
   }
   if (boss) { const [bx, by] = nearestRoomy(nav, exit[0] - 2.5, exit[1] - 0.2); spawn(theme.boss_mob, "legendary", n + 2, true, bx, by); }
 

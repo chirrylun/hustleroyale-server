@@ -64,13 +64,13 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
     ]);
     const list = ((rows ?? []) as unknown as FighterRow[]).filter((r) => r.template);
     if (!list.length) return null;
-    const info: FighterInfo[] = list.map((r) => { const gb = gearBonus(r.gear); return {
+    const info: FighterInfo[] = list.map((r) => { const gb = gearBonus(r.gear, r as never); return {
       id: r.id, name: r.template!.name, role: r.template!.role, level: r.level, max: r.hp + gb.hp, atk: r.atk + gb.atk, magic: r.magic + gb.magic, def: r.def + gb.def, frac: r.hp_frac ?? 1,
       sprite: lookKey(r.gender, r.gear),
     }; });
     return {
       uid, name: (prof?.username as string | undefined) ?? "Player", info, buckets: new Map(), dirty: false,
-      fighters: new Map(info.map((f) => [f.id, { id: f.id, uid, x: 0, y: 0, max: f.max, def: f.def, level: f.level, frac: 1, dead: true }])), // not a target until it reports in
+      fighters: new Map(info.map((f) => [f.id, { id: f.id, uid, x: 0, y: 0, max: f.max, def: f.def, level: f.level, role: f.role, frac: 1, dead: true }])), // not a target until it reports in
     };
   };
 
