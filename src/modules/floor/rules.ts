@@ -2,7 +2,7 @@
  * What a floor can legitimately hold. Mirrors the web's src/lib/world/floor.ts (THEMES, baseMobCount): if the
  * monster tables or the floor-count formula change there, change them here too.
  */
-import { miniFor } from "../../world/floor.js";
+import { miniFor, TRAINING_FLOOR } from "../../world/floor.js";
 export const MAX_FLOOR = 40;
 const THEME_MOBS: string[][] = [
   ["slime", "bat", "mushroom", "boar"], // floors 1-10
@@ -24,6 +24,7 @@ export interface KillClaim {
 
 /** True when a mob like this could have been spawned on this floor. */
 export function plausibleMob(floor: number, m: KillClaim): boolean {
+  if (floor === TRAINING_FLOOR) return !m.boss && !m.mini && m.kind === "slime" && Number.isInteger(m.level) && m.level >= 1 && m.level <= 3;
   if (!Number.isInteger(floor) || floor < 1 || floor > MAX_FLOOR || !Number.isInteger(m.level)) return false;
   const t = theme(floor);
   if (m.mini) return !m.boss && miniFor(floor)?.kind === m.kind && m.level === floor + 3;

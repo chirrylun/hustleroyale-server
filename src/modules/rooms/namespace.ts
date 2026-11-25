@@ -7,9 +7,10 @@ import type { Mob } from "./mobs.js";
 import { RoomManager } from "./manager.js";
 import { mobWire, type FighterInfo, type Member } from "./room.js";
 import { lookKey } from "../../world/look.js";
+import { TRAINING_FLOOR } from "../../world/floor.js";
 import { GEAR_SELECT, gearBonus, type GearRows } from "../gear/bonus.js";
 
-const joinSchema = z.object({ floor: z.number().int().min(0).max(40), code: z.string().min(4).max(8).optional(), seed: z.number().int().min(0).max(2_147_483_647).optional() });
+const joinSchema = z.object({ floor: z.number().int().min(TRAINING_FLOOR).max(40), code: z.string().min(4).max(8).optional(), seed: z.number().int().min(0).max(2_147_483_647).optional() });
 const updateSchema = z.object({
   p: z.array(z.tuple([z.string().max(40), z.number(), z.number(), z.number(), z.number()])).max(3).optional(),
   a: z.array(z.tuple([z.number().int(), z.string().max(40), z.number()])).max(24).optional(),
@@ -40,7 +41,9 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
   const pay = async (uid: string, floor: number, mob: Mob) => {
     const claim = { kind: mob.kind, level: mob.level, boss: mob.boss, mini: mob.mini };
     if (runs.check(uid, floor, claim, Date.now(), false)) return; // not a run this player is on: no pay
-    const { data, error } = await supabase.rpc("srv_report_floor_kill", { p_user: uid, p_floor: floor, p_kind: claim.kind, p_level: claim.level, p_boss: claim.boss, p_mini: !!claim.mini });
+    const { data, error } = floor === TRAINING_FLOOR
+      ? await supabase.rpc("srv_report_training_kill", { p_user: uid, p_kind: claim.kind, p_level: claim.level })
+      : await supabase.rpc("srv_report_floor_kill", { p_user: uid, p_floor: floor, p_kind: claim.kind, p_level: claim.level, p_boss: claim.boss, p_mini: !!claim.mini });
     if (error) { log.error({ err: error }, "room kill failed"); return; }
     const res = data as { throttled?: boolean } & Record<string, unknown>;
     if (!res.throttled) runs.paid(uid, claim);
@@ -101,7 +104,8 @@ export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): Ro
       if (!body.success) return reply({ error: "bad_request" });
       try {
         leave();
-        if (body.data.floor > 0) { // floor 0 is the lobby: nothing to unlock
+        if (body.data.floor === TRAINING_FLOOR) runs.enter(uid, TRAINING_FLOOR); // the training field: nothing to unlock
+        else if (body.data.floor > 0) { // floor 0 is the lobby: nothing to unlock
           const { data: ok, error } = await supabase.rpc("srv_enter_floor", { p_user: uid, p_floor: body.data.floor });
           if (error) throw error;
           if (!ok) return reply({ error: "floor_locked" });

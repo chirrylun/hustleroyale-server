@@ -18,8 +18,8 @@ export const aggroRange = (floor: number, kind: string, boss: boolean) => {
   const base = floor <= 2 ? 0 : floor <= 10 ? 1.5 + (floor - 3) * 0.35 : Math.min(6.5, 4 + (floor - 11) * 0.1);
   return base * (TEMPER[kind] ?? 1);
 };
-export const chaseRange = (floor: number, boss: boolean) => (boss ? LEASH : Math.min(LEASH, 3 + 0.3 * floor));
-export const loseRange = (floor: number, boss: boolean) => (boss ? 14 : 4 + 0.2 * floor);
+export const chaseRange = (floor: number, boss: boolean) => (boss ? LEASH : Math.min(LEASH, 3 + 0.3 * Math.max(1, floor)));
+export const loseRange = (floor: number, boss: boolean) => (boss ? 14 : 4 + 0.2 * Math.max(1, floor));
 
 /** How many mobs a floor holds at once and how often a new one walks in, for `players` on it (same formula as the web's spawnPlan). */
 export function spawnPlan(base: number, players: number) {

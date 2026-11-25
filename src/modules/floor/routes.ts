@@ -2,12 +2,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../../plugins/auth.js";
+import { TRAINING_FLOOR } from "../../world/floor.js";
 import { MAX_FLOOR } from "./rules.js";
 import { FloorRuns } from "./run.js";
 
-const enterBody = z.object({ floor: z.number().int().min(1).max(MAX_FLOOR) });
+const enterBody = z.object({ floor: z.number().int().min(TRAINING_FLOOR).max(MAX_FLOOR).refine((n) => n !== 0) });
 const killBody = z.object({
-  floor: z.number().int().min(1).max(MAX_FLOOR),
+  floor: z.number().int().min(TRAINING_FLOOR).max(MAX_FLOOR).refine((n) => n !== 0),
   kind: z.string().min(1).max(24),
   level: z.number().int().min(1).max(MAX_FLOOR + 2),
   boss: z.boolean().default(false),
@@ -29,6 +30,7 @@ export function registerFloorRoutes(app: FastifyInstance, supabase: SupabaseClie
   app.post("/floor/enter", { preHandler: auth, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
     const body = enterBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
+    if (body.data.floor === TRAINING_FLOOR) { runs.enter(req.user!.id, TRAINING_FLOOR); return { ok: true }; } // the training field has nothing to unlock
     const { data, error } = await supabase.rpc("srv_enter_floor", { p_user: req.user!.id, p_floor: body.data.floor });
     if (error) { req.log.error({ err: error }, "floor enter failed"); return reply.code(500).send({ error: "enter_failed" }); }
     if (!data) return reply.code(403).send({ error: "floor_locked" });
@@ -46,7 +48,9 @@ export function registerFloorRoutes(app: FastifyInstance, supabase: SupabaseClie
     if (refused === "no_run") return reply.code(409).send({ error: "no_run" }); // server restarted: the client re-enters and retries
     if (refused) return reply.code(422).send({ error: refused });
 
-    const { data, error } = await supabase.rpc("srv_report_floor_kill", { p_user: user, p_floor: floor, p_kind: kind, p_level: level, p_boss: boss });
+    const { data, error } = floor === TRAINING_FLOOR
+      ? await supabase.rpc("srv_report_training_kill", { p_user: user, p_kind: kind, p_level: level })
+      : await supabase.rpc("srv_report_floor_kill", { p_user: user, p_floor: floor, p_kind: kind, p_level: level, p_boss: boss });
     if (error) {
       req.log.warn({ err: error }, "floor kill refused");
       return reply.code(/floor_locked|bad_monster|unauthorized/.test(error.message) ? 422 : 500).send({ error: "kill_failed" });

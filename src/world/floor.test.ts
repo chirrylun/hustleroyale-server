@@ -49,3 +49,20 @@ describe("mob placement", () => {
     }
   });
 });
+
+describe("training field", () => {
+  it("is one open meadow of level 1-3 slimes with the three NPCs, reachable from the start", () => {
+    for (const seed of [0, 1, 2, 3, 4]) {
+      const f = generateFloor(-1, seed), nav = buildNav(f.nav);
+      expect(f.mobs.length).toBe(6);
+      expect(f.mobs.every((m) => m.kind === "slime" && m.level >= 1 && m.level <= 3 && !m.boss)).toBe(true);
+      expect(f.props.some((p) => p.kind === "entry" || p.kind === "exit")).toBe(false);
+      expect(f.npcs.map((n) => n.id).sort()).toEqual(["changer", "manager", "trainer"]);
+      const from = nearestWalkable(nav, f.start[0] + 1, f.start[1]);
+      for (const t of [...f.npcs, ...f.mobs]) {
+        expect(standable(nav, ...nearestWalkable(nav, t.x, t.y))).toBe(true);
+        expect(findPath(nav, from, nearestWalkable(nav, t.x - 1, t.y)).length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
