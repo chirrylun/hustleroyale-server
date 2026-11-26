@@ -2,6 +2,8 @@ import { snapshot, step, submitIntent, submitStance, type BattleEvent, type Batt
 import {
   intentSchema,
   stanceSchema,
+  type ArenaEnd,
+  type ArenaInfo,
   type BattleEndPayload,
   type BattleStartPayload,
   type BattleSnapshot,
@@ -40,6 +42,10 @@ export interface SessionOptions {
   emitter: BattleEmitter;
   onDone: () => void;
   log?: { error: (obj: unknown, msg?: string) => void };
+  /** Set on arena fights: which mode this is, shown to the browser. */
+  arena?: ArenaInfo;
+  /** Arena fights: runs once when the fight is decided and returns what to add to the result (rankings, raid progress). */
+  onEnd?: (r: { winnerSide: Side | null; durationMs: number; state: BattleState }) => Promise<ArenaEnd | undefined>;
 }
 
 /**
@@ -73,6 +79,7 @@ export class SoloSession {
     return {
       matchId: this.o.matchId,
       difficulty: this.o.difficulty,
+      ...(this.o.arena ? { arena: this.o.arena } : {}),
       yourSide: 1,
       controlledUnitId: this.o.controlledUnitId,
       tickMs: TICK_MS,
@@ -235,6 +242,15 @@ export class SoloSession {
       }
     }
 
+    let arena: ArenaEnd | undefined;
+    if (this.o.onEnd) {
+      try {
+        arena = await this.o.onEnd({ winnerSide, durationMs, state });
+      } catch (err) {
+        this.o.log?.error({ err, matchId }, "battle: arena end failed");
+      }
+    }
+
     try {
       await this.o.store.saveLog(matchId, this.events);
     } catch (err) {
@@ -248,6 +264,7 @@ export class SoloSession {
       durationMs,
       damageDealt: Math.round(this.damageDealt),
       reward,
+      ...(arena ? { arena } : {}),
     });
     this.o.onDone();
   }

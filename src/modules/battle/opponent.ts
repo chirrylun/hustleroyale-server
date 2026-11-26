@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Rng, Role, Stats, UnitInit } from "../../engine/index.js";
 import type { Difficulty, UnitMeta } from "./protocol.js";
+import { HP_RATE, STAT_RATE, type RangeDef } from "./arena.js";
 import { DIFFICULTY_CONFIG } from "./rewards.js";
 import { minionMetas, one, toPassive, toSkillDef, toSkillMeta, type SkillRow } from "./team.js";
 
@@ -141,5 +142,31 @@ export function buildOpponent(
     });
   });
 
+  return { units, metas: [...metas, ...minionMetas(units)], totalHp: units.reduce((sum, u) => sum + u.stats.hp, 0) };
+}
+
+/**
+ * The AI team for an arena Challenge: it mirrors the player's roles like `buildOpponent`, but its strength comes from LEVEL, not from the
+ * player's power. Each fighter is a template of the range's rarities at a level inside the range, grown the way real fighters grow
+ * (+9% health and +7% everything else per level) and nudged by the range's gear factor.
+ */
+export function buildRangeOpponent(pool: PoolTemplate[], playerRoles: Role[], range: RangeDef, rng: Rng): Opponent {
+  const base = range.min + Math.floor(rng.next() * (range.max - range.min + 1));
+  const units: UnitInit[] = [];
+  const metas: UnitMeta[] = [];
+  playerRoles.forEach((role, i) => {
+    const ofRole = pool.filter((t) => t.role === role && t.skills.length > 0);
+    if (ofRole.length === 0) throw new Error(`no_opponent_for_role:${role}`);
+    const rarities = [...new Set(ofRole.map((t) => t.rarity))].filter((r) => range.foeRarity[r]);
+    const rarity = rarities.length ? weightedPick(rarities.map((r): [Rarity, number] => [r, range.foeRarity[r]!]), rng) : undefined;
+    const candidates = rarity ? ofRole.filter((t) => t.rarity === rarity) : ofRole;
+    const t = candidates[Math.min(candidates.length - 1, Math.floor(rng.next() * candidates.length))]!;
+    const level = Math.min(range.max, Math.max(range.min, base + Math.floor(rng.next() * 3) - 1));
+    const grow = (v: number, rate: number) => Math.max(1, Math.round(v * (1 + rate * (level - 1)) * range.gear * (1 - STAT_VARIANCE + rng.next() * STAT_VARIANCE * 2)));
+    const id = `foe-${i + 1}`;
+    const stats: Stats = { hp: grow(t.base_hp, HP_RATE), atk: grow(t.base_atk, STAT_RATE), def: grow(t.base_def, STAT_RATE), spd: Math.round(t.base_spd), stamina: Math.round(t.base_stamina), magic: grow(t.base_magic, STAT_RATE) };
+    units.push({ id, side: 2, name: t.name, role: t.role, stats, skills: t.skills.map(toSkillDef), passive: toPassive(t.passive) });
+    metas.push({ id, side: 2, name: t.name, role: t.role, spriteKey: t.sprite_key, grade: null, level, spd: stats.spd, controlled: false, skills: toSkillMeta(t.skills) });
+  });
   return { units, metas: [...metas, ...minionMetas(units)], totalHp: units.reduce((sum, u) => sum + u.stats.hp, 0) };
 }

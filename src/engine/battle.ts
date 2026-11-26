@@ -132,7 +132,7 @@ export function createBattle(init: UnitInit[], seed: number, opts: BattleOptions
       manualDest: null,
       dodge: null,
       targetId: null,
-      hp: u.stats.hp,
+      hp: Math.max(1, Math.round(u.stats.hp * Math.min(1, Math.max(0, u.hpFrac ?? 1)))),
       maxHp: u.stats.hp,
       energy: energyCap * 0.5,
       maxEnergy: energyCap,

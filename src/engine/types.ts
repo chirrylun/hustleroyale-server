@@ -109,6 +109,8 @@ export interface UnitInit {
   passive?: Passive;
   /** A minion that starts out of the fight and joins when its owner summons it. */
   summonOf?: string;
+  /** Starting health as a share of max (0-1). Multi-fight runs carry what is left from one fight to the next. */
+  hpFrac?: number;
 }
 
 export interface Modifier {

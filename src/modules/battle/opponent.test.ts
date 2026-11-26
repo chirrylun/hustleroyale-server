@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createRng, type Role, type Stats } from "../../engine/index.js";
-import { buildOpponent, FOE_RARITY_WEIGHTS, statPower, type PoolTemplate } from "./opponent.js";
+import { RANGES, RANGE_IDS } from "./arena.js";
+import { buildOpponent, buildRangeOpponent, FOE_RARITY_WEIGHTS, statPower, type PoolTemplate } from "./opponent.js";
 import { DIFFICULTY_CONFIG } from "./rewards.js";
 import type { SkillRow } from "./team.js";
 
@@ -75,5 +76,28 @@ describe("buildOpponent", () => {
     expect(() => buildOpponent(POOL.filter((t) => t.role !== "healer"), ROLES, PLAYER_POWER, "hustler", createRng(1))).toThrow(
       "no_opponent_for_role:healer",
     );
+  });
+});
+
+describe("buildRangeOpponent (arena challenge)", () => {
+  it("mirrors the roles, stays inside the level range and is deterministic", () => {
+    for (const id of RANGE_IDS) {
+      const range = RANGES[id];
+      for (let seed = 1; seed <= 20; seed++) {
+        const foe = buildRangeOpponent(POOL, ROLES, range, createRng(seed));
+        expect(foe.units.map((u) => u.role)).toEqual(ROLES);
+        for (const m of foe.metas) { expect(m.level).toBeGreaterThanOrEqual(range.min); expect(m.level).toBeLessThanOrEqual(range.max); }
+        expect(JSON.stringify(foe)).toBe(JSON.stringify(buildRangeOpponent(POOL, ROLES, range, createRng(seed))));
+      }
+    }
+  });
+  it("is stronger in a higher range", () => {
+    const power = (id: (typeof RANGE_IDS)[number]) => {
+      let sum = 0;
+      for (let seed = 1; seed <= 30; seed++) sum += buildRangeOpponent(POOL, ROLES, RANGES[id], createRng(seed)).units.reduce((a, u) => a + statPower(u.stats), 0);
+      return sum / 30;
+    };
+    expect(power("20-30")).toBeGreaterThan(power("10-20"));
+    expect(power("30-40")).toBeGreaterThan(power("20-30"));
   });
 });
