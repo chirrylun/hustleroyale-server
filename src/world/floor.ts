@@ -139,7 +139,7 @@ function rng(seed: number) {
 /** Mob numbers by level. Fighters grow +9% HP and +7% ATK/DEF per level (database); mobs run a little ahead so a same-level fight costs real health. */
 /** Every mob balance knob in one place (the server gets this file by sync). */
 export const TUNE = {
-  hpBase: 30, hpPerLevel: 16, atkBase: 5, atkPerLevel: 2.1, defBase: 2, defPerLevel: 0.9,
+  hpBase: 34, hpPerLevel: 18, atkBase: 5, atkPerLevel: 2.1, defBase: 2, defPerLevel: 0.9,
   /** Members of a pack are a little weaker one by one, because there are several of them. */
   packHp: 0.6, packAtk: 0.8,
   /** Gear can add at most this share of a stat to what a fighter has without it (0.667 means gear is at most 40% of the total). */
