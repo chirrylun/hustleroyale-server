@@ -156,9 +156,18 @@ export function tickMob(m: Mob, dt: number, now: number, ctx: MobCtx) {
   } else {
     m.path = [];
     if (m.cd <= 0) {
-      m.cd = 1.3;
+      const big = m.boss || m.mini;
+      const enraged = big && m.hp < m.max * 0.3; // under 30% health a boss swings faster and harder
+      m.cd = enraged ? 1.05 : 1.3;
       m.swings++; m.hits++; m.dirty = true;
-      let mult = 0.9 + Math.random() * 0.2;
+      let mult = (0.9 + Math.random() * 0.2) * (enraged ? 1.25 : 1);
+      if (big && m.hits % 5 === 0) {
+        // A sweeping blow catches everyone close to it, so a party has to spread out and keep its healer alive.
+        m.cd += 0.6;
+        for (const a of live) if (dist(m, a) <= 2.6 / ZOOM) ctx.hit(m, a, hitDamage(m.atk, a.def, a.level ?? m.level, mult * 0.75));
+        return;
+      }
+      if (big && m.hits % 3 === 0) { mult *= 1.8; m.cd += 0.5; } // a slow heavy blow on its target
       if (m.charged) { mult *= 1.7; m.charged = false; } // the charge lands
       if (m.kind === "golem" && m.hits % 4 === 0) { mult *= 2.2; m.cd = 2.2; } // a slow, heavy blow every fourth swing
       ctx.hit(m, target, hitDamage(m.atk, target.def, target.level ?? m.level, mult));
