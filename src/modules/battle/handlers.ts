@@ -5,7 +5,7 @@ import type { GameServer, GameSocket } from "../../plugins/socket.js";
 import { BOSSES, RANGES, RAID_HEAL_FRAC, RAID_REVIVE_FRAC, RAID_STAGES, buildBoss, raidFoe, raidFloorName, type RangeDef } from "./arena.js";
 import { ArenaStore } from "./arenaStore.js";
 import { loadOpponentPool, buildOpponent, buildRangeOpponent, statPower, type PoolTemplate } from "./opponent.js";
-import { startRequestSchema, type ArenaEnd, type BattleEndPayload, type NextAck, type QueueAck, type StartAck, type UnitMeta } from "./protocol.js";
+import { queueRequestSchema, startRequestSchema, type ArenaEnd, type BattleEndPayload, type NextAck, type QueueAck, type StartAck, type UnitMeta } from "./protocol.js";
 import { ALLY_DODGE, DIFFICULTY_CONFIG } from "./rewards.js";
 import { SoloSession, type BattleEmitter } from "./session.js";
 import { MatchInProgressError, type BattleStore } from "./store.js";
@@ -64,7 +64,7 @@ class SideSeat implements LiveSession {
 /** Players fight someone whose team is within this many levels of theirs, and wait this long before being offered the AI. */
 const PVP_LEVEL_GAP = 5;
 const PVP_WAIT_MS = 20_000;
-interface Waiting { userId: string; avg: number; team: LoadedTeam; timer: ReturnType<typeof setTimeout> }
+interface Waiting { userId: string; range: RangeDef["id"]; avg: number; team: LoadedTeam; timer: ReturnType<typeof setTimeout> }
 
 /** A Floor Raid in progress: the team as it was when the raid began, and the health it carries from floor to floor. */
 interface RaidRun {
@@ -112,7 +112,10 @@ export class BattleManager {
   }
 
   /** Challenge against a real player: matched at once with someone waiting within a few levels, otherwise wait (and be told if nobody comes). */
-  async queuePvp(userId: string): Promise<QueueAck> {
+  async queuePvp(userId: string, raw: unknown): Promise<QueueAck> {
+    const parsed = queueRequestSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "invalid_request" };
+    const range = parsed.data.range;
     if (this.starting.has(userId) || this.waiting.has(userId)) return { ok: false, error: "match_in_progress" };
     const stale = this.sessions.get(userId);
     if (stale?.awaitingStart) await stale.abandon();
@@ -124,10 +127,10 @@ export class BattleManager {
       const lv = team.metas.filter((m) => !m.summon);
       const avg = lv.reduce((sum, m) => sum + m.level, 0) / Math.max(1, lv.length);
       // The closest level among those waiting, if any is near enough.
-      const foe = [...this.waiting.values()].filter((w) => Math.abs(w.avg - avg) <= PVP_LEVEL_GAP).sort((p, q) => Math.abs(p.avg - avg) - Math.abs(q.avg - avg))[0];
+      const foe = [...this.waiting.values()].filter((w) => w.range === range && Math.abs(w.avg - avg) <= PVP_LEVEL_GAP).sort((p, q) => Math.abs(p.avg - avg) - Math.abs(q.avg - avg))[0];
       if (foe) {
         this.cancelPvp(foe.userId);
-        this.startPvp(foe, { userId, avg, team });
+        this.startPvp(foe, { userId, avg, team }, range);
         return { ok: true, matched: true };
       }
       const timer = setTimeout(() => {
@@ -135,7 +138,7 @@ export class BattleManager {
         this.deps.io.to(room(userId)).emit("pvp:none");
       }, PVP_WAIT_MS);
       timer.unref?.();
-      this.waiting.set(userId, { userId, avg, team, timer });
+      this.waiting.set(userId, { userId, range, avg, team, timer });
       return { ok: true, matched: false };
     } catch (err) {
       if (err instanceof TeamError) return { ok: false, error: err.code };
@@ -147,7 +150,7 @@ export class BattleManager {
   }
 
   /** Two players, two teams, one arena. The first to wait stands on the left. */
-  private startPvp(a: { userId: string; avg: number; team: LoadedTeam }, b: { userId: string; avg: number; team: LoadedTeam }): void {
+  private startPvp(a: { userId: string; avg: number; team: LoadedTeam }, b: { userId: string; avg: number; team: LoadedTeam }, rangeId: RangeDef["id"]): void {
     const left = a.team;
     const right = withSide(b.team, 2);
     const seed = randomInt(0, 2 ** 32);
@@ -160,11 +163,10 @@ export class BattleManager {
       sync: (p) => { toA.sync(p); toB.sync(p); },
       end: (p) => { toA.end(p); toB.end(flip(p)); },
     };
-    const range = (avg: number): RangeDef["id"] => (avg >= 30 ? "30-40" : avg >= 20 ? "20-30" : "10-20");
     const session = new SoloSession({
       matchId: randomUUID(), userId: a.userId, difficulty: "hustler", state, metas: [...left.metas, ...right.metas], controlledUnitId: null,
       enemyTotalHp: 1, store: this.arenaStore, emitter, log: this.deps.log, pvp: true,
-      arena: { mode: "challenge", range: range(Math.round((a.avg + b.avg) / 2)), title: "Challenge", subtitle: "Player match" },
+      arena: { mode: "challenge", range: rangeId, title: "Challenge", subtitle: "Player match" },
       onDone: () => { if (this.sessions.get(a.userId) === session) this.sessions.delete(a.userId); if (this.sessions.get(b.userId) === seat) this.sessions.delete(b.userId); },
     });
     const seat = new SideSeat(session);
@@ -420,9 +422,9 @@ export function registerBattleHandlers(io: GameServer, socket: GameSocket, manag
     if (typeof ack !== "function") return;
     ack(await manager.startTutorial(userId, request));
   });
-  socket.on("pvp:queue", async (ack) => {
+  socket.on("pvp:queue", async (request, ack) => {
     if (typeof ack !== "function") return;
-    ack(await manager.queuePvp(userId));
+    ack(await manager.queuePvp(userId, request));
   });
   socket.on("pvp:cancel", () => manager.cancelPvp(userId));
   socket.on("raid:next", async (ack) => {

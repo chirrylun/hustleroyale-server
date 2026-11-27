@@ -133,7 +133,7 @@ export interface BattleEndPayload {
 
 export type StartAck = { ok: true; matchId: string } | { ok: false; error: StartError };
 export type StartError = "invalid_request" | "match_in_progress" | "no_team" | "invalid_team" | "server_error";
-/** Joining the player queue: waiting for someone close to your level, or matched straight away. */
+/** Joining the player queue for a level range: waiting for someone close to your level, or matched straight away. */
 export type QueueAck = { ok: true; matched: boolean } | { ok: false; error: StartError };
 export type NextAck = { ok: true } | { ok: false; error: "no_raid" | "match_in_progress" | "server_error" };
 
@@ -145,7 +145,7 @@ export interface ClientToServerEvents {
   /** The player has read the instructions and pressed Start: the frozen tutorial fight begins. */
   "tutorial:begin": (ack: (response: { ok: boolean }) => void) => void;
   /** Challenge against a real player: wait for someone within a few levels (or fight at once if one is waiting). */
-  "pvp:queue": (ack: (response: QueueAck) => void) => void;
+  "pvp:queue": (request: unknown, ack: (response: QueueAck) => void) => void;
   "pvp:cancel": () => void;
   "battle:intent": (intent: unknown) => void;
   "battle:stance": (stance: unknown) => void;
@@ -166,6 +166,9 @@ export interface ServerToClientEvents {
 
 /** Everything coming from the browser is untrusted: validate it before it reaches the engine. */
 const controlled = z.uuid().nullish();
+/** Challenge against a player: which level range the player queues in. */
+export const queueRequestSchema = z.object({ range: z.enum(RANGE_IDS) });
+
 export const startRequestSchema = z.union([
   /** Challenge: an AI team of the chosen level range. No steering, no difficulty to pick. */
   z.object({ mode: z.literal("challenge"), range: z.enum(RANGE_IDS) }),
