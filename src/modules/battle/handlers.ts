@@ -5,11 +5,11 @@ import type { GameServer, GameSocket } from "../../plugins/socket.js";
 import { BOSSES, RANGES, RAID_HEAL_FRAC, RAID_REVIVE_FRAC, RAID_STAGES, buildBoss, raidFoe, raidFloorName, type RangeDef } from "./arena.js";
 import { ArenaStore } from "./arenaStore.js";
 import { loadOpponentPool, buildOpponent, buildRangeOpponent, statPower, type PoolTemplate } from "./opponent.js";
-import { startRequestSchema, type ArenaEnd, type NextAck, type StartAck, type UnitMeta } from "./protocol.js";
+import { startRequestSchema, type ArenaEnd, type BattleEndPayload, type NextAck, type QueueAck, type StartAck, type UnitMeta } from "./protocol.js";
 import { ALLY_DODGE, DIFFICULTY_CONFIG } from "./rewards.js";
 import { SoloSession, type BattleEmitter } from "./session.js";
 import { MatchInProgressError, type BattleStore } from "./store.js";
-import { loadTeam, TeamError, type LoadedTeam } from "./team.js";
+import { loadTeam, TeamError, withSide, type LoadedTeam } from "./team.js";
 import { buildSlimes, TutorialStore, TUTORIAL_STAGES, type TutorialStage } from "./tutorial.js";
 
 /** A page refresh or a dropped connection shouldn't cost the player their match. */
@@ -38,6 +38,34 @@ function describeSide(units: { id: string; name: string; role: string; stats: un
   }));
 }
 
+/** What the socket handlers need from a running match, whichever player's seat they are in. */
+interface LiveSession {
+  readonly awaitingStart: boolean;
+  intent(raw: unknown): void;
+  stance(raw: unknown): void;
+  startPayload(): ReturnType<SoloSession["startPayload"]>;
+  abandon(): Promise<void>;
+  begin(): boolean;
+  halt(): void;
+}
+
+/** The second player's seat in a fight between two players: same match, their own side. */
+class SideSeat implements LiveSession {
+  readonly awaitingStart = false;
+  constructor(private readonly session: SoloSession) {}
+  intent(): void {}
+  stance(raw: unknown): void { this.session.stance(raw, 2); }
+  startPayload() { return this.session.startPayload(2); }
+  abandon(): Promise<void> { return this.session.forfeit(2); }
+  begin(): boolean { return false; }
+  halt(): void {}
+}
+
+/** Players fight someone whose team is within this many levels of theirs, and wait this long before being offered the AI. */
+const PVP_LEVEL_GAP = 5;
+const PVP_WAIT_MS = 20_000;
+interface Waiting { userId: string; avg: number; team: LoadedTeam; timer: ReturnType<typeof setTimeout> }
+
 /** A Floor Raid in progress: the team as it was when the raid began, and the health it carries from floor to floor. */
 interface RaidRun {
   range: RangeDef;
@@ -54,7 +82,8 @@ interface RaidRun {
 const RAID_IDLE_MS = 15 * 60_000;
 
 export class BattleManager {
-  private readonly sessions = new Map<string, SoloSession>();
+  private readonly sessions = new Map<string, LiveSession>();
+  private readonly waiting = new Map<string, Waiting>();
   private readonly raids = new Map<string, RaidRun>();
   private readonly arenaStore = new ArenaStore();
   private readonly starting = new Set<string>();
@@ -62,7 +91,7 @@ export class BattleManager {
 
   constructor(private readonly deps: BattleDeps) {}
 
-  get(userId: string): SoloSession | undefined {
+  get(userId: string): LiveSession | undefined {
     return this.sessions.get(userId);
   }
 
@@ -71,6 +100,77 @@ export class BattleManager {
     this.sessions.clear();
     for (const r of this.raids.values()) if (r.idle) clearTimeout(r.idle);
     this.raids.clear();
+    for (const w of this.waiting.values()) clearTimeout(w.timer);
+    this.waiting.clear();
+  }
+
+  /** The player stops waiting for an opponent. */
+  cancelPvp(userId: string): void {
+    const w = this.waiting.get(userId);
+    if (w) clearTimeout(w.timer);
+    this.waiting.delete(userId);
+  }
+
+  /** Challenge against a real player: matched at once with someone waiting within a few levels, otherwise wait (and be told if nobody comes). */
+  async queuePvp(userId: string): Promise<QueueAck> {
+    if (this.starting.has(userId) || this.waiting.has(userId)) return { ok: false, error: "match_in_progress" };
+    const stale = this.sessions.get(userId);
+    if (stale?.awaitingStart) await stale.abandon();
+    if (this.sessions.has(userId)) return { ok: false, error: "match_in_progress" };
+    this.dropRaid(userId);
+    this.starting.add(userId);
+    try {
+      const team = await loadTeam(this.deps.supabase, userId, null);
+      const lv = team.metas.filter((m) => !m.summon);
+      const avg = lv.reduce((sum, m) => sum + m.level, 0) / Math.max(1, lv.length);
+      // The closest level among those waiting, if any is near enough.
+      const foe = [...this.waiting.values()].filter((w) => Math.abs(w.avg - avg) <= PVP_LEVEL_GAP).sort((p, q) => Math.abs(p.avg - avg) - Math.abs(q.avg - avg))[0];
+      if (foe) {
+        this.cancelPvp(foe.userId);
+        this.startPvp(foe, { userId, avg, team });
+        return { ok: true, matched: true };
+      }
+      const timer = setTimeout(() => {
+        this.waiting.delete(userId);
+        this.deps.io.to(room(userId)).emit("pvp:none");
+      }, PVP_WAIT_MS);
+      timer.unref?.();
+      this.waiting.set(userId, { userId, avg, team, timer });
+      return { ok: true, matched: false };
+    } catch (err) {
+      if (err instanceof TeamError) return { ok: false, error: err.code };
+      this.deps.log.error({ err, userId }, "battle: could not queue for a player match");
+      return { ok: false, error: "server_error" };
+    } finally {
+      this.starting.delete(userId);
+    }
+  }
+
+  /** Two players, two teams, one arena. The first to wait stands on the left. */
+  private startPvp(a: { userId: string; avg: number; team: LoadedTeam }, b: { userId: string; avg: number; team: LoadedTeam }): void {
+    const left = a.team;
+    const right = withSide(b.team, 2);
+    const seed = randomInt(0, 2 ** 32);
+    const state = createBattle([...left.units, ...right.units], seed, { dodge: { 1: ALLY_DODGE, 2: ALLY_DODGE } });
+    const toA = this.emitterFor(a.userId), toB = this.emitterFor(b.userId);
+    const flip = (p: BattleEndPayload): BattleEndPayload => ({ ...p, result: p.result === "win" ? "loss" : p.result === "loss" ? "win" : "draw", winnerSide: p.winnerSide === null ? null : p.winnerSide === 1 ? 2 : 1, damageDealt: 0 });
+    const emitter: BattleEmitter = {
+      start: (p) => { toA.start(p); toB.start({ ...p, yourSide: 2 }); },
+      events: (p) => { toA.events(p); toB.events(p); },
+      sync: (p) => { toA.sync(p); toB.sync(p); },
+      end: (p) => { toA.end(p); toB.end(flip(p)); },
+    };
+    const range = (avg: number): RangeDef["id"] => (avg >= 30 ? "30-40" : avg >= 20 ? "20-30" : "10-20");
+    const session = new SoloSession({
+      matchId: randomUUID(), userId: a.userId, difficulty: "hustler", state, metas: [...left.metas, ...right.metas], controlledUnitId: null,
+      enemyTotalHp: 1, store: this.arenaStore, emitter, log: this.deps.log, pvp: true,
+      arena: { mode: "challenge", range: range(Math.round((a.avg + b.avg) / 2)), title: "Challenge", subtitle: "Player match" },
+      onDone: () => { if (this.sessions.get(a.userId) === session) this.sessions.delete(a.userId); if (this.sessions.get(b.userId) === seat) this.sessions.delete(b.userId); },
+    });
+    const seat = new SideSeat(session);
+    this.sessions.set(a.userId, session);
+    this.sessions.set(b.userId, seat);
+    session.start();
   }
 
   /** Forgets a player's raid (they left, or it ended). */
@@ -176,7 +276,9 @@ export class BattleManager {
         ? buildRangeOpponent(pool, team.units.map((u) => u.role), range, createRng(seed ^ 0x9e3779b9))
         : buildOpponent(pool, team.units.map((u) => u.role), playerPower, difficulty, createRng(seed ^ 0x9e3779b9));
 
-      const matchId = await this.deps.store.startMatch({
+      // Challenge fights pay nothing and store nothing; only the old practice match (kept for browsers that have not reloaded) is recorded.
+      const store = range ? this.arenaStore : this.deps.store;
+      const matchId = range ? await this.arenaStore.startMatch() : await this.deps.store.startMatch({
         userId,
         seed,
         controlledFighterId,
@@ -197,7 +299,7 @@ export class BattleManager {
         metas: [...team.metas, ...foe.metas],
         controlledUnitId: controlledFighterId,
         enemyTotalHp: foe.totalHp,
-        store: this.deps.store,
+        store,
         emitter,
         log,
         ...(range ? { arena: { mode: "challenge" as const, range: range.id, title: "Challenge", subtitle: `Level ${range.min} to ${range.max}` } } : {}),
@@ -318,6 +420,11 @@ export function registerBattleHandlers(io: GameServer, socket: GameSocket, manag
     if (typeof ack !== "function") return;
     ack(await manager.startTutorial(userId, request));
   });
+  socket.on("pvp:queue", async (ack) => {
+    if (typeof ack !== "function") return;
+    ack(await manager.queuePvp(userId));
+  });
+  socket.on("pvp:cancel", () => manager.cancelPvp(userId));
   socket.on("raid:next", async (ack) => {
     const res = await manager.nextRaidStage(userId);
     if (typeof ack === "function") ack(res);
@@ -340,6 +447,7 @@ export function registerBattleHandlers(io: GameServer, socket: GameSocket, manag
       if (still.length === 0) {
         await manager.get(userId)?.abandon();
         manager.dropRaid(userId);
+        manager.cancelPvp(userId);
       }
     }, RECONNECT_GRACE_MS);
     timer.unref?.();

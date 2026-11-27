@@ -44,6 +44,8 @@ export interface SessionOptions {
   log?: { error: (obj: unknown, msg?: string) => void };
   /** Set on arena fights: which mode this is, shown to the browser. */
   arena?: ArenaInfo;
+  /** A fight between two players: leaving forfeits it, and neither side is run by the AI commander. */
+  pvp?: boolean;
   /** Arena fights: runs once when the fight is decided and returns what to add to the result (rankings, raid progress). */
   onEnd?: (r: { winnerSide: Side | null; durationMs: number; state: BattleState }) => Promise<ArenaEnd | undefined>;
 }
@@ -75,12 +77,12 @@ export class SoloSession {
     return this.o.matchId;
   }
 
-  startPayload(): BattleStartPayload {
+  startPayload(side: Side = 1): BattleStartPayload {
     return {
       matchId: this.o.matchId,
       difficulty: this.o.difficulty,
       ...(this.o.arena ? { arena: this.o.arena } : {}),
-      yourSide: 1,
+      yourSide: side,
       controlledUnitId: this.o.controlledUnitId,
       tickMs: TICK_MS,
       units: this.o.metas,
@@ -142,15 +144,25 @@ export class SoloSession {
   }
 
   /** Team stance, only honoured when the player isn't steering a fighter (the engine enforces that). */
-  stance(raw: unknown): void {
+  stance(raw: unknown, side: Side = 1): void {
     const parsed = stanceSchema.safeParse(raw);
     if (!parsed.success || this.closed || !this.started) return;
-    submitStance(this.o.state, 1, parsed.data);
+    submitStance(this.o.state, side, parsed.data);
+  }
+
+  /** In a player fight, the one who leaves loses and the other is told at once. */
+  async forfeit(side: Side): Promise<void> {
+    if (this.closed) return;
+    this.close();
+    const winner: Side = side === 1 ? 2 : 1;
+    this.o.emitter.end({ matchId: this.o.matchId, result: winner === 1 ? "win" : "loss", winnerSide: winner, durationMs: this.o.state.timeMs, damageDealt: 0, reward: null, ...(this.o.arena ? { arena: { mode: this.o.arena.mode, range: this.o.arena.range } } : {}) });
+    this.o.onDone();
   }
 
   /** Stops the battle without a result or payout (the player left). */
   async abandon(): Promise<void> {
     if (this.closed) return;
+    if (this.o.pvp) return this.forfeit(1);
     this.close();
     try {
       await this.o.store.abandon(this.o.matchId);

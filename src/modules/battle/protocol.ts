@@ -133,6 +133,8 @@ export interface BattleEndPayload {
 
 export type StartAck = { ok: true; matchId: string } | { ok: false; error: StartError };
 export type StartError = "invalid_request" | "match_in_progress" | "no_team" | "invalid_team" | "server_error";
+/** Joining the player queue: waiting for someone close to your level, or matched straight away. */
+export type QueueAck = { ok: true; matched: boolean } | { ok: false; error: StartError };
 export type NextAck = { ok: true } | { ok: false; error: "no_raid" | "match_in_progress" | "server_error" };
 
 export interface ClientToServerEvents {
@@ -142,6 +144,9 @@ export interface ClientToServerEvents {
   "raid:next": (ack: (response: NextAck) => void) => void;
   /** The player has read the instructions and pressed Start: the frozen tutorial fight begins. */
   "tutorial:begin": (ack: (response: { ok: boolean }) => void) => void;
+  /** Challenge against a real player: wait for someone within a few levels (or fight at once if one is waiting). */
+  "pvp:queue": (ack: (response: QueueAck) => void) => void;
+  "pvp:cancel": () => void;
   "battle:intent": (intent: unknown) => void;
   "battle:stance": (stance: unknown) => void;
   /** Ask for the live match again (the player left the arena screen and came back, or refreshed). */
@@ -155,6 +160,8 @@ export interface ServerToClientEvents {
   "battle:end": (payload: BattleEndPayload) => void;
   /** A frozen tutorial fight has started ticking. */
   "battle:begin": (payload: { matchId: string }) => void;
+  /** Nobody close to your level turned up while you waited. */
+  "pvp:none": () => void;
 }
 
 /** Everything coming from the browser is untrusted: validate it before it reaches the engine. */

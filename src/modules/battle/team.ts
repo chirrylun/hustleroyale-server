@@ -1,6 +1,6 @@
 import { lookKey } from "../../world/look.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { minionInit, type DamageType, type Passive, type Role, type SkillDef, type SkillEffect, type SkillKind, type TargetRule, type UnitInit } from "../../engine/index.js";
+import { minionInit, type Side, type DamageType, type Passive, type Role, type SkillDef, type SkillEffect, type SkillKind, type TargetRule, type UnitInit } from "../../engine/index.js";
 import type { UnitMeta } from "./protocol.js";
 import { GEAR_SELECT, gearBonus, type GearRows } from "../gear/bonus.js";
 
@@ -69,6 +69,12 @@ export class TeamError extends Error {
   }
 }
 
+/** The same team standing on the other side of the arena (for a fight between two players). */
+export function withSide(team: LoadedTeam, side: Side): LoadedTeam {
+  const units = team.units.filter((u) => !u.summonOf).map((u) => ({ ...u, side }));
+  return { units, metas: [...team.metas.filter((m) => !m.summon).map((m) => ({ ...m, side })), ...minionMetas(units)] };
+}
+
 export interface LoadedTeam {
   units: UnitInit[];
   metas: UnitMeta[];
@@ -124,7 +130,7 @@ export const one = <T>(value: T | T[] | null | undefined): T | null => (Array.is
  * Reads the player's fighting team (team slots 1-3) straight from the database. The browser never
  * sends stats or skills, so a modified client can't fight with anything it doesn't own.
  */
-export async function loadTeam(supabase: SupabaseClient, userId: string, controlledFighterId: string | null): Promise<LoadedTeam> {
+export async function loadTeam(supabase: SupabaseClient, userId: string, controlledFighterId: string | null, side: Side = 1): Promise<LoadedTeam> {
   const { data, error } = await supabase
     .from("fighters")
     .select(
@@ -160,7 +166,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
     const controlled = row.id === controlledFighterId;
     units.push({
       id: row.id,
-      side: 1,
+      side,
       name: template.name,
       role: template.role,
       stats: { hp: row.hp + gb.hp, atk: row.atk + gb.atk, def: row.def + gb.def, spd: row.spd + gb.spd, stamina: row.stamina, magic: row.magic + gb.magic },
@@ -170,7 +176,7 @@ export async function loadTeam(supabase: SupabaseClient, userId: string, control
     });
     metas.push({
       id: row.id,
-      side: 1,
+      side,
       name: template.name,
       role: template.role,
       spriteKey: lookKey(row.gender, row.gear),
