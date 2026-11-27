@@ -145,7 +145,9 @@ export const TUNE = {
   /** Gear can add at most this share of a stat to what a fighter has without it (0.667 means gear is at most 40% of the total). */
   gearCap: 2 / 3,
   /** Bosses and special mobs: a long fight that wants a party, not a wall. Party size adds health on top (bossScale). */
-  bossHp: 9, bossAtk: 1.7, miniHp: 7, miniAtk: 1.5,
+  bossHp: 9, bossAtk: 1.7, miniHp: 4.1, miniAtk: 1.5,
+  /** Ordinary mobs are tanky: gear, skills and a few levels decide a fight, not button-mashing. (Special mobs are balanced on top of this.) */
+  mobHp: 1.7,
 };
 /** Each kind's own build: [hp, attack, defence] multipliers. Bosses and special mobs ignore these. */
 export const KIND_MUL: Record<string, [number, number, number]> = {
@@ -156,7 +158,7 @@ export const PACK_KINDS = ["slime", "goblin", "direwolf"];
 export const packSize = (floor: number, rand: () => number) => (floor <= 2 ? 2 : floor <= 6 ? 2 + (rand() < 0.4 ? 1 : 0) : 2 + Math.floor(rand() * 3));
 export const mobStats = (level: number, boss: boolean, kind?: string, pack = false) => {
   const m = !boss && kind ? KIND_MUL[kind] ?? [1, 1, 1] : [1, 1, 1];
-  const hp = (TUNE.hpBase + TUNE.hpPerLevel * level) * (boss ? TUNE.bossHp : 1) * m[0] * (pack ? TUNE.packHp : 1);
+  const hp = (TUNE.hpBase + TUNE.hpPerLevel * level) * (boss ? TUNE.bossHp : TUNE.mobHp) * m[0] * (pack ? TUNE.packHp : 1);
   const atk = (TUNE.atkBase + TUNE.atkPerLevel * level) * (boss ? TUNE.bossAtk : 1) * m[1] * (pack ? TUNE.packAtk : 1);
   return { hp: Math.round(hp), atk: Math.round(atk), def: Math.round((TUNE.defBase + TUNE.defPerLevel * level) * m[2]) };
 };
@@ -170,7 +172,13 @@ export const baseMobCount = (n: number) => (n === TRAINING_FLOOR ? 6 : Math.min(
 
 /** A fresh ordinary mob for floor `n` (kind, level and stats), for the spawner. */
 /** How many levels above its floor an ordinary mob can be. */
-export const MOB_LEAD = 3;
+export const MOB_LEAD = 9; // a level-10 mob can roam floor 1
+/** The level of an ordinary mob on floor `n`: usually the floor's own, sometimes a good deal above it. The rare big ones are the grind-and-gear-up fights. */
+export function mobLevel(n: number, rand: () => number): number {
+  const r = rand();
+  const up = r < 0.45 ? 0 : r < 0.68 ? 1 : r < 0.82 ? 2 + Math.floor(rand() * 2) : r < 0.93 ? 4 + Math.floor(rand() * 3) : 7 + Math.floor(rand() * (MOB_LEAD - 6));
+  return Math.max(1, n + Math.min(MOB_LEAD, up));
+}
 
 export function rollMob(n: number, rand: () => number): Omit<MobSpec, "id" | "x" | "y"> {
   if (n === TRAINING_FLOOR) { const level = 1 + Math.floor(rand() * 3); return { kind: "slime", rarity: "common", sprite: "mob_slime_common", level, boss: false, ...mobStats(level, false) }; }
@@ -178,8 +186,7 @@ export function rollMob(n: number, rand: () => number): Omit<MobSpec, "id" | "x"
   const f = ((n - 1) % 10) + 1;
   const rarity = RARITY[f <= 3 ? 0 : f <= 6 ? 1 : 2];
   const kind = theme.mobs[Math.floor(rand() * theme.mobs.length)];
-  const r = rand(); // mostly the floor's level, but a quarter are a level up, one in ten two up and one in twenty three up: a real fight for a party at the floor's level
-  const level = Math.max(1, n + (r < 0.05 ? 3 : r < 0.15 ? 2 : r < 0.4 ? 1 : 0));
+  const level = mobLevel(n, rand);
   return { kind, rarity, sprite: `mob_${kind}_${rarity}`, level, boss: false, ...mobStats(level, false, kind) };
 }
 
@@ -382,7 +389,7 @@ export function generateFloor(n: number, seed = 0): Floor {
     // Floor 1 always has a bat, so the first job can be done there.
     if (training) { spawn("slime", "common", 1 + (i % 3), false, x, y); continue; }
     const kind = n === 1 && i === 0 ? "bat" : pick(theme.mobs);
-    const lvl = Math.max(1, n + (i % 3 === 2 ? 1 : 0));
+    const lvl = n === 1 && i === 0 ? 1 : mobLevel(n, rand); // floor 1's first bat stays gentle so the first job can be done
     if (PACK_KINDS.includes(kind) && !(n === 1 && i === 0)) {
       // A pack: the same kind side by side, all pulled in when one is.
       const g = grpId++, size = packSize(n, rand);

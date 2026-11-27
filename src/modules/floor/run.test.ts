@@ -7,7 +7,8 @@ describe("plausibleMob", () => {
     expect(plausibleMob(1, { kind: "bat", level: 1, boss: false })).toBe(true);
     expect(plausibleMob(1, { kind: "bat", level: 2, boss: false })).toBe(true);
     expect(plausibleMob(1, { kind: "golem", level: 1, boss: false })).toBe(false);
-    expect(plausibleMob(1, { kind: "bat", level: 9, boss: false })).toBe(false);
+    expect(plausibleMob(1, { kind: "bat", level: 10, boss: false })).toBe(true); // a level-10 mob can roam floor 1
+    expect(plausibleMob(1, { kind: "bat", level: 11, boss: false })).toBe(false);
     expect(plausibleMob(5, { kind: "goblin", level: 12, boss: true })).toBe(false); // not a boss floor
     expect(plausibleMob(10, { kind: "goblin", level: 12, boss: true })).toBe(true);
     expect(plausibleMob(10, { kind: "slime", level: 12, boss: true })).toBe(false);
