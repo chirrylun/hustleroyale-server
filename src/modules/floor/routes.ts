@@ -15,6 +15,8 @@ const killBody = z.object({
 });
 const hpBody = z.object({ ids: z.array(z.uuid()).min(1).max(3), fracs: z.array(z.number().transform((n) => Math.min(1, Math.max(0, n)))).min(1).max(3) }); // a hair over 1 from float drift is clamped, not refused
 
+const wipeBody = z.object({ floor: z.number().int().min(TRAINING_FLOOR).max(MAX_FLOOR).refine((n) => n !== 0), ids: z.array(z.uuid()).min(1).max(3) });
+
 /**
  * Floor progression is decided here, not in the browser: the client says "I entered / killed X / my health is Y",
  * the server checks that against what a floor can hold and what the player has done, and only then asks the
@@ -66,5 +68,14 @@ export function registerFloorRoutes(app: FastifyInstance, supabase: SupabaseClie
     const { error } = await supabase.rpc("srv_save_party_hp", { p_user: req.user!.id, p_ids: body.data.ids, p_fracs: body.data.fracs });
     if (error) { req.log.error({ err: error }, "hp save failed"); return reply.code(500).send({ error: "save_failed" }); }
     return { ok: true };
+  });
+
+  /** The whole party went down: each fighter loses some experience (and at most one level). Repeat calls within 30 seconds do nothing. */
+  app.post("/floor/wipe", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
+    const body = wipeBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "bad_request" });
+    const { data, error } = await supabase.rpc("srv_floor_wipe", { p_user: req.user!.id, p_floor: body.data.floor, p_ids: body.data.ids });
+    if (error) { req.log.error({ err: error }, "wipe failed"); return reply.code(500).send({ error: "wipe_failed" }); }
+    return data;
   });
 }
