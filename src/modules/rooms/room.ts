@@ -14,8 +14,8 @@ export interface Member { uid: string; name: string; fighters: Map<string, Ally>
 export interface RoomOut {
   toRoom(event: string, payload: unknown): void;
   toUser(uid: string, event: string, payload: unknown): void;
-  /** A mob died: pay each credited player. */
-  kill(uid: string, mob: Mob): void;
+  /** A mob died: pay the players who hurt it (and their parties). `credit` is the damage each of them did. */
+  kill(credit: ReadonlyMap<string, number>, mob: Mob): void;
 }
 
 export interface Hit { m: number; f: string; d: number }
@@ -138,7 +138,7 @@ export class Room implements Place {
       b.tokens--;
       mem.buckets.set(h.f, b);
       mob.hp = Math.max(0, mob.hp - Math.round(h.d));
-      mob.credit.add(uid);
+      mob.credit.set(uid, (mob.credit.get(uid) ?? 0) + Math.round(h.d));
       mob.provoked = true;
       if (!mob.target || !this.allies().some((x) => x.id === mob.target && !x.dead)) { mob.target = a.id; mob.path = []; }
       this.alert(mob, a);
@@ -158,7 +158,10 @@ export class Room implements Place {
 
   private die(mob: Mob, now: number) {
     mob.dead = true; mob.deadAt = now; mob.path = []; mob.target = null; mob.dirty = true;
-    if (!mob.minion) for (const uid of mob.credit) if (this.members.has(uid)) this.out.kill(uid, mob);
+    if (!mob.minion) {
+      const here = new Map([...mob.credit].filter(([uid]) => this.members.has(uid)));
+      if (here.size) this.out.kill(here, mob);
+    }
     // A slime splits into two little ones that fight on (and pay nothing).
     if (mob.kind === "slime" && !mob.minion && !mob.boss && !mob.mini) {
       for (let i = 0; i < 2; i++) {

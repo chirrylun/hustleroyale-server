@@ -49,8 +49,8 @@ export interface Mob {
   target: string | null; provoked: boolean;
   path: Pt[]; repath: number; cd: number; wanderAt: number; speedMul: number;
   born: number; dead: boolean; deadAt: number;
-  /** Players who hurt it: they share the kill. */
-  credit: Set<string>;
+  /** Players who hurt it, and how much damage each did: they share the kill. */
+  credit: Map<string, number>;
   dirty: boolean;
   /** Bumped on each swing so clients can play the attack animation. */
   swings: number;
@@ -72,7 +72,7 @@ export function makeMob(id: number, s: Omit<MobSpec, "id">, nav: Nav, home: [num
   return {
     id, kind: s.kind, rarity: s.rarity, sprite: s.sprite, level: s.level, boss: s.boss, mini: !!s.mini, x, y, hp, max: hp, baseMax: s.hp, atk: s.atk, def: s.def,
     home: s.boss ? [x, y, 1.5] : home, target: null, provoked: false, path: [], repath: 0, cd: 1, wanderAt: now + rnd(0, 3000), speedMul: rnd(0.9, 1.1),
-    born: now, dead: false, deadAt: 0, credit: new Set(), dirty: true, swings: 0,
+    born: now, dead: false, deadAt: 0, credit: new Map(), dirty: true, swings: 0,
     grp: s.grp, minion: false, pref: Math.random() < 0.45 ? "soft" : "near", swapAt: now + rnd(3000, 5000), hits: 0, chargeAt: now + rnd(2000, 5000), dashUntil: 0, charged: false,
   };
 }

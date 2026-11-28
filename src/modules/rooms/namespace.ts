@@ -5,6 +5,7 @@ import { verifyAccessToken } from "../../plugins/auth.js";
 import type { FloorRuns } from "../floor/run.js";
 import type { Mob } from "./mobs.js";
 import { RoomManager } from "./manager.js";
+import { pickLootWinner, type PartyManager } from "../party/party.js";
 import { mobWire, type FighterInfo, type Member } from "./room.js";
 import { lookKey } from "../../world/look.js";
 import { TRAINING_FLOOR } from "../../world/floor.js";
@@ -25,6 +26,7 @@ export interface RoomDeps {
   io: Server;
   supabase: SupabaseClient;
   runs: FloorRuns;
+  parties: PartyManager;
   log: { error: (obj: unknown, msg?: string) => void; info: (obj: unknown, msg?: string) => void };
 }
 
@@ -33,30 +35,50 @@ export interface RoomDeps {
  * receive the room's mobs, the other players' fighters and what the mobs do. Entering and kills are paid by
  * the same service-role functions as before, now fed by what the server saw in the room.
  */
-export function registerRoomNamespace({ io, supabase, runs, log }: RoomDeps): RoomManager {
+export function registerRoomNamespace({ io, supabase, runs, parties, log }: RoomDeps): RoomManager {
   const ns: Namespace = io.of("/floor");
   const roomName = (id: string) => `room:${id}`;
   const userName = (uid: string) => `u:${uid}`;
 
-  const pay = async (uid: string, floor: number, mob: Mob) => {
+  /** Pay one player for a kill. `share` is how many party members split it; only the loot winner gets the drops. */
+  const pay = async (uid: string, floor: number, mob: Mob, o: { share: number; loot: boolean; winner: string; hurt: boolean }) => {
     const claim = { kind: mob.kind, level: mob.level, boss: mob.boss, mini: mob.mini };
-    if (runs.check(uid, floor, claim, Date.now(), false)) return; // not a run this player is on: no pay
+    if (o.hurt && runs.check(uid, floor, claim, Date.now(), false)) return; // not a run this player is on: no pay
     const { data, error } = floor === TRAINING_FLOOR
       ? await supabase.rpc("srv_report_training_kill", { p_user: uid, p_kind: claim.kind, p_level: claim.level })
-      : await supabase.rpc("srv_report_floor_kill", { p_user: uid, p_floor: floor, p_kind: claim.kind, p_level: claim.level, p_boss: claim.boss, p_mini: !!claim.mini });
+      : await supabase.rpc("srv_report_floor_kill", { p_user: uid, p_floor: floor, p_kind: claim.kind, p_level: claim.level, p_boss: claim.boss, p_mini: !!claim.mini, p_party: o.share, p_loot: o.loot });
     if (error) { log.error({ err: error }, "room kill failed"); return; }
     const res = data as { throttled?: boolean } & Record<string, unknown>;
-    if (!res.throttled) runs.paid(uid, claim);
-    ns.to(userName(uid)).emit("k", { m: mob.id, kind: mob.kind, boss: mob.boss, mini: mob.mini, ...res });
+    if (!res.throttled && o.hurt) runs.paid(uid, claim);
+    ns.to(userName(uid)).emit("k", { m: mob.id, kind: mob.kind, boss: mob.boss, mini: mob.mini, ...res, party: o.share > 1 ? { n: o.share, loot: o.loot, winner: o.winner } : undefined });
+  };
+
+  /**
+   * A mob died. Players on their own are paid as before. A party in the room splits the experience between everyone present (the
+   * ones who did not swing too), and the drops go to one member by a draw weighted on damage dealt.
+   */
+  const settle = (roomId: string, credit: ReadonlyMap<string, number>, mob: Mob) => {
+    const room = [...credit.keys()].map((u) => manager.roomOf(u)).find((r) => r?.id === roomId);
+    if (!room) return;
+    const done = new Set<string>();
+    for (const uid of credit.keys()) {
+      if (done.has(uid)) continue;
+      const party = parties.partyOf(uid);
+      const group = party ? party.members.map((m) => m.uid).filter((u) => room.members.has(u)) : [uid];
+      if (!group.includes(uid)) group.push(uid);
+      const winner = pickLootWinner(group, credit);
+      const winnerName = room.members.get(winner)?.name ?? "";
+      for (const m of group) {
+        done.add(m);
+        void pay(m, room.floor, mob, { share: group.length, loot: m === winner, winner: winnerName, hurt: credit.has(m) });
+      }
+    }
   };
 
   const manager = new RoomManager((roomId) => ({
     toRoom: (event, payload) => ns.to(roomName(roomId)).emit(event, payload),
     toUser: (uid, event, payload) => ns.to(userName(uid)).emit(event, payload),
-    kill: (uid, mob) => {
-      const room = manager.roomOf(uid);
-      if (room) void pay(uid, room.floor, mob);
-    },
+    kill: (credit, mob) => settle(roomId, credit, mob),
   }));
   manager.start();
 

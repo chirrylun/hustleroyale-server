@@ -3,9 +3,10 @@ import type { Namespace, Server, Socket } from "socket.io";
 import { z } from "zod";
 import { verifyAccessToken } from "../../plugins/auth.js";
 import type { RoomManager } from "../rooms/manager.js";
+import { PARTY_MAX, type Party, type PartyError, type PartyManager, type PartyOptions } from "../party/party.js";
 
 export const MAX_CHAT = 160;
-const sayBody = z.object({ scope: z.enum(["world", "room", "whisper"]), text: z.string().max(400), to: z.string().min(1).max(32).optional() });
+const sayBody = z.object({ scope: z.enum(["world", "room", "party", "whisper"]), text: z.string().max(400), to: z.string().min(1).max(32).optional() });
 
 /** One line of chat: no control characters or line breaks, single spaces, at most MAX_CHAT characters. Empty means "nothing to send". */
 export function cleanChat(raw: string): string {
@@ -32,17 +33,55 @@ export interface ChatDeps {
   io: Server;
   supabase: SupabaseClient;
   rooms: RoomManager;
+  parties: PartyManager;
   log: { error: (obj: unknown, msg?: string) => void };
 }
 
 /**
- * The `/chat` namespace. World goes to everyone connected, Room to everyone in the sender's shared room (the lobby or a floor room
+ * The `/chat` namespace: chat and parties (they share a connection and the player's name). World goes to everyone connected, Room to everyone in the sender's shared room (the lobby or a floor room
  * from the `/floor` namespace), Whisper to one player by name. Nothing is stored: chat is live only.
  */
-export function registerChatNamespace({ io, supabase, rooms, log }: ChatDeps): Namespace {
+export function registerChatNamespace({ io, supabase, rooms, parties, log }: ChatDeps): Namespace {
   const ns: Namespace = io.of("/chat");
   const userRoom = (uid: string) => `u:${uid}`;
   let seq = 0;
+
+
+  // ---- Parties ---------------------------------------------------------------------------------------------------------------------
+  const levels = new Map<string, { level: number; at: number }>();
+  /** A player's level for party rules: their strongest fighter on the team. */
+  const levelOf = async (uid: string): Promise<number> => {
+    const hit = levels.get(uid);
+    if (hit && Date.now() - hit.at < 30_000) return hit.level;
+    const { data } = await supabase.from("fighters").select("level").eq("owner_id", uid).gt("team_slot", 0).order("level", { ascending: false }).limit(1);
+    const level = (data?.[0]?.level as number | undefined) ?? 1;
+    levels.set(uid, { level, at: Date.now() });
+    return level;
+  };
+  const hostRoom = (uid: string) => { const r = rooms.roomOf(uid); return r ? { floor: r.floor, code: r.code } : null; };
+  /** What a member sees of their party. The password is for the host's eyes only. */
+  const view = (p: Party, forUid: string) => ({
+    id: p.id, host: p.host, members: p.members, open: p.open, min: p.min, max: p.max, recruiting: p.recruiting, full: p.members.length >= PARTY_MAX,
+    password: forUid === p.host ? p.password : undefined, room: hostRoom(p.host),
+  });
+  const push = (uids: string[], party: Party | null, note?: string) => {
+    for (const u of uids) ns.to(userRoom(u)).emit("party", { party: party ? view(party, u) : null, note });
+  };
+  const fail = (r: { error: PartyError; min?: number; max?: number }) => ({ error: r.error, min: r.min, max: r.max });
+  const optionsSchema = z.object({ open: z.boolean(), password: z.string().max(40).optional(), min: z.number().int(), max: z.number().int(), recruiting: z.boolean().optional() });
+  const idSchema = z.object({ id: z.string().min(4).max(40), password: z.string().max(40).optional() });
+  const uidSchema = z.object({ uid: z.string().min(1).max(60) });
+  const leaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Open parties in the player's own room that they could still join. */
+  const nearby = async (uid: string) => {
+    const mine = rooms.roomOf(uid);
+    if (!mine || parties.partyOf(uid)) return [];
+    const level = await levelOf(uid);
+    return parties.all()
+      .filter((p) => p.recruiting && p.members.length < PARTY_MAX && p.host !== uid && rooms.roomOf(p.host)?.id === mine.id)
+      .map((p) => ({ id: p.id, host: p.host, hostName: p.members.find((m) => m.uid === p.host)?.name ?? "Player", n: p.members.length, open: p.open, min: p.min, max: p.max, fits: level >= p.min && level <= p.max }));
+  };
 
   ns.use(async (socket, next) => {
     const user = await verifyAccessToken(supabase, socket.handshake.auth?.token as string | undefined);
@@ -79,6 +118,10 @@ export function registerChatNamespace({ io, supabase, rooms, log }: ChatDeps): N
 
         if (body.data.scope === "world") {
           ns.emit("msg", msg);
+        } else if (body.data.scope === "party") {
+          const party = parties.partyOf(uid);
+          if (!party) return reply({ error: "no_party" });
+          for (const m of party.members) ns.to(userRoom(m.uid)).emit("msg", msg);
         } else if (body.data.scope === "room") {
           const room = rooms.roomOf(uid);
           if (!room) return reply({ error: "no_room" });
@@ -100,6 +143,78 @@ export function registerChatNamespace({ io, supabase, rooms, log }: ChatDeps): N
         reply({ error: "failed" });
       }
     });
+
+
+    // ---- Party actions: every one answers with { ok, party } or { error } ----
+    type Ack = (r: unknown) => void;
+    const ackOf = (a?: Ack): Ack => (typeof a === "function" ? a : () => {});
+    const me = async () => ({ uid, name: (name ??= await nameOf(uid)) ?? "Player", level: await levelOf(uid) });
+
+    socket.on("party:sync", async (_raw: unknown, ack?: Ack) => {
+      const p = parties.partyOf(uid);
+      ackOf(ack)({ party: p ? view(p, uid) : null, nearby: await nearby(uid), level: await levelOf(uid) });
+    });
+    socket.on("party:create", async (raw: unknown, ack?: Ack) => {
+      const reply = ackOf(ack), body = optionsSchema.safeParse(raw);
+      if (!body.success) return reply({ error: "bad_range" });
+      const r = parties.create(await me(), body.data as PartyOptions);
+      if (!r.ok) return reply(fail(r));
+      push([uid], r.party); reply({ ok: true, party: view(r.party, uid) });
+    });
+    socket.on("party:join", async (raw: unknown, ack?: Ack) => {
+      const reply = ackOf(ack), body = idSchema.safeParse(raw);
+      if (!body.success) return reply({ error: "no_such" });
+      const player = await me();
+      const target = parties.get(body.data.id);
+      const here = rooms.roomOf(uid), there = target && rooms.roomOf(target.host);
+      if (target && (!here || !there || here.id !== there.id)) return reply({ error: "no_such" }); // you join from the same room as the host
+      const r = parties.join(player, body.data.id, body.data.password);
+      if (!r.ok) return reply(fail(r));
+      push(r.party.members.map((m) => m.uid), r.party, `${player.name} joined the party`);
+      reply({ ok: true, party: view(r.party, uid) });
+    });
+    socket.on("party:edit", (raw: unknown, ack?: Ack) => {
+      const reply = ackOf(ack), body = optionsSchema.safeParse(raw);
+      if (!body.success) return reply({ error: "bad_range" });
+      const r = parties.edit(uid, body.data as PartyOptions);
+      if (!r.ok) return reply(fail(r));
+      push(r.party.members.map((m) => m.uid), r.party); reply({ ok: true, party: view(r.party, uid) });
+    });
+    socket.on("party:leave", (_raw: unknown, ack?: Ack) => {
+      const r = parties.leave(uid);
+      if (!r.ok) return ackOf(ack)(fail(r));
+      push([uid], null);
+      if (r.party) push(r.party.members.map((m) => m.uid), r.party, `${name ?? "A player"} left the party`);
+      ackOf(ack)({ ok: true });
+    });
+    socket.on("party:kick", (raw: unknown, ack?: Ack) => {
+      const reply = ackOf(ack), body = uidSchema.safeParse(raw);
+      if (!body.success) return reply({ error: "no_target" });
+      const r = parties.kick(uid, body.data.uid);
+      if (!r.ok) return reply(fail(r));
+      push([body.data.uid], null, "You were removed from the party");
+      push(r.party.members.map((m) => m.uid), r.party); reply({ ok: true, party: view(r.party, uid) });
+    });
+    socket.on("party:disband", (_raw: unknown, ack?: Ack) => {
+      const r = parties.disband(uid);
+      if (!r.ok) return ackOf(ack)(fail(r));
+      for (const m of r.party.members) push([m.uid], null, m.uid === uid ? undefined : "The host disbanded the party");
+      ackOf(ack)({ ok: true });
+    });
+    // Someone who goes away for good leaves their party after a couple of minutes (a refresh or a dropped connection is fine).
+    clearTimeout(leaveTimers.get(uid)); leaveTimers.delete(uid);
+    socket.on("disconnect", () => {
+      const t = setTimeout(async () => {
+        leaveTimers.delete(uid);
+        if ((await ns.in(userRoom(uid)).fetchSockets()).length) return;
+        const r = parties.leave(uid);
+        if (r.ok && r.party) push(r.party.members.map((m) => m.uid), r.party);
+      }, 120_000);
+      t.unref(); leaveTimers.set(uid, t);
+    });
+
+    // A fresh connection learns about the party it is already in.
+    { const p = parties.partyOf(uid); if (p) push([uid], p); }
 
     /** Who is in my room, for the whisper picker. */
     socket.on("who", (_raw: unknown, ack?: (r: unknown) => void) => {

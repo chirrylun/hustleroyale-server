@@ -6,7 +6,7 @@ import { Room, type FighterInfo, type Member, type RoomOut } from "./room.js";
 
 const world = generateFloor(3), nav = buildNav(world.nav);
 const events: { e: string; p: any }[] = [], kills: string[] = [];
-const out: RoomOut = { toRoom: (e, p) => events.push({ e, p }), toUser: () => {}, kill: (uid) => kills.push(uid) };
+const out: RoomOut = { toRoom: (e, p) => events.push({ e, p }), toUser: () => {}, kill: (credit) => kills.push(...credit.keys()) };
 
 const member = (uid: string, x: number, y: number): Member => {
   const info: FighterInfo[] = [{ id: `${uid}-f`, sprite: "x", name: "F", role: "dps", level: 3, max: 100, atk: 20, magic: 5, def: 5, frac: 1 }];

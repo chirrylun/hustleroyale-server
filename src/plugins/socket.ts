@@ -8,6 +8,7 @@ import { SupabaseBattleStore } from "../modules/battle/store.js";
 import type { FloorRuns } from "../modules/floor/run.js";
 import { registerRoomNamespace } from "../modules/rooms/namespace.js";
 import { registerChatNamespace } from "../modules/chat/chat.js";
+import { PartyManager } from "../modules/party/party.js";
 import { verifyAccessToken, type AuthUser } from "./auth.js";
 
 export interface GameSocketData {
@@ -41,8 +42,9 @@ export function attachSocket(app: FastifyInstance, env: Env, supabase: SupabaseC
     registerBattleHandlers(io, socket, battle);
   });
 
-  const rooms = registerRoomNamespace({ io: io as never, supabase, runs, log: app.log });
-  registerChatNamespace({ io: io as never, supabase, rooms, log: app.log });
+  const parties = new PartyManager();
+  const rooms = registerRoomNamespace({ io: io as never, supabase, runs, parties, log: app.log });
+  registerChatNamespace({ io: io as never, supabase, rooms, parties, log: app.log });
 
   app.addHook("onClose", async () => {
     rooms.stop();
