@@ -3,7 +3,7 @@ import type { Namespace, Server, Socket } from "socket.io";
 import { z } from "zod";
 import { verifyAccessToken } from "../../plugins/auth.js";
 import type { RoomManager } from "../rooms/manager.js";
-import { PARTY_MAX, type Party, type PartyError, type PartyManager, type PartyOptions } from "../party/party.js";
+import { InviteBook, PARTY_MAX, type InviteInfo, type Party, type PartyError, type PartyManager, type PartyOptions } from "../party/party.js";
 
 export const MAX_CHAT = 160;
 const sayBody = z.object({ scope: z.enum(["world", "room", "party", "whisper"]), text: z.string().max(400), to: z.string().min(1).max(32).optional() });
@@ -72,6 +72,16 @@ export function registerChatNamespace({ io, supabase, rooms, parties, log }: Cha
   const idSchema = z.object({ id: z.string().min(4).max(40), password: z.string().max(40).optional() });
   const uidSchema = z.object({ uid: z.string().min(1).max(60) });
   const leaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const invites = new InviteBook();
+  const online = async (uid: string) => (await ns.in(userRoom(uid)).fetchSockets()).length > 0;
+  /** Who is asking: their level and the classes of the fighters they bring, for the invitation box. */
+  const describe = async (uid: string, name: string): Promise<InviteInfo> => {
+    const { data } = await supabase.from("fighters").select("level, template:fighter_templates(archetype)").eq("owner_id", uid).gt("team_slot", 0).order("team_slot");
+    const classes = ((data ?? []) as unknown as { level: number; template: { archetype: string } | { archetype: string }[] | null }[])
+      .map((f) => ({ archetype: (Array.isArray(f.template) ? f.template[0] : f.template)?.archetype ?? "novice", level: f.level }));
+    return { from: uid, name, level: Math.max(1, ...classes.map((c) => c.level)), classes, t: Date.now() };
+  };
+  const sendInvites = (uid: string) => ns.to(userRoom(uid)).emit("invites", invites.list(uid));
 
   /** Open parties in the player's own room that they could still join. */
   const nearby = async (uid: string) => {
@@ -152,7 +162,7 @@ export function registerChatNamespace({ io, supabase, rooms, parties, log }: Cha
 
     socket.on("party:sync", async (_raw: unknown, ack?: Ack) => {
       const p = parties.partyOf(uid);
-      ackOf(ack)({ uid, party: p ? view(p, uid) : null, nearby: await nearby(uid), level: await levelOf(uid) });
+      ackOf(ack)({ uid, party: p ? view(p, uid) : null, nearby: await nearby(uid), level: await levelOf(uid), invites: invites.list(uid) });
     });
     socket.on("party:create", async (raw: unknown, ack?: Ack) => {
       const reply = ackOf(ack), body = optionsSchema.safeParse(raw);
@@ -179,6 +189,59 @@ export function registerChatNamespace({ io, supabase, rooms, parties, log }: Cha
       const r = parties.edit(uid, body.data as PartyOptions);
       if (!r.ok) return reply(fail(r));
       push(r.party.members.map((m) => m.uid), r.party); reply({ ok: true, party: view(r.party, uid) });
+    });
+    socket.on("party:invite", async (raw: unknown, ack?: Ack) => {
+      const reply = ackOf(ack), body = uidSchema.safeParse(raw);
+      if (!body.success) return reply({ error: "no_target" });
+      const to = body.data.uid;
+      try {
+        if (to === uid) return reply({ error: "no_target" });
+        const mine = parties.partyOf(uid);
+        if (mine && mine.host !== uid) return reply({ error: "not_host" });
+        if (mine && mine.members.length >= PARTY_MAX) return reply({ error: "full" });
+        const here = rooms.roomOf(uid), there = rooms.roomOf(to);
+        if (!here || !there || here.id !== there.id) return reply({ error: "not_here" });
+        if (parties.partyOf(to)) return reply({ error: "target_in_party" });
+        if (!(await online(to))) return reply({ error: "offline" });
+        if (invites.recent(to, uid, 10_000)) return reply({ error: "slow" });
+        const info = await describe(uid, (name ??= await nameOf(uid)) ?? "Player");
+        invites.add(to, info);
+        sendInvites(to);
+        ns.to(userRoom(to)).emit("party", { party: undefined, note: `${info.name} invited you to a party` });
+        reply({ ok: true });
+      } catch (e) { log.error({ err: e }, "party invite failed"); reply({ error: "failed" }); }
+    });
+    socket.on("party:accept", async (raw: unknown, ack?: Ack) => {
+      const reply = ackOf(ack), body = z.object({ from: z.string().min(1).max(60) }).safeParse(raw);
+      if (!body.success) return reply({ error: "no_such" });
+      if (parties.partyOf(uid)) return reply({ error: "in_party" });
+      const inv = invites.take(uid, body.data.from);
+      if (!inv) { sendInvites(uid); return reply({ error: "invite_gone" }); }
+      if (!(await online(inv.from))) { sendInvites(uid); return reply({ error: "offline" }); }
+      const player = await me();
+      let party = parties.partyOf(inv.from);
+      if (party && party.host !== inv.from) { sendInvites(uid); return reply({ error: "invite_gone" }); }
+      if (!party) {
+        const host = { uid: inv.from, name: inv.name, level: await levelOf(inv.from) };
+        const made = parties.create(host, { open: true, min: 1, max: 99, recruiting: false });
+        if (!made.ok) return reply(fail(made));
+        party = made.party;
+      }
+      const joined = parties.join(player, party.id, undefined, true);
+      if (!joined.ok) { sendInvites(uid); return reply(fail(joined)); }
+      invites.clear(uid);
+      sendInvites(uid);
+      push(joined.party.members.map((m) => m.uid), joined.party, `${player.name} joined the party`);
+      reply({ ok: true, party: view(joined.party, uid) });
+    });
+    socket.on("party:decline", (raw: unknown, ack?: Ack) => {
+      const body = z.object({ from: z.string().min(1).max(60) }).safeParse(raw);
+      if (body.success) {
+        const inv = invites.take(uid, body.data.from);
+        sendInvites(uid);
+        if (inv) { const p = parties.partyOf(inv.from); ns.to(userRoom(inv.from)).emit("party", { party: p ? view(p, inv.from) : undefined, note: `${name ?? "A player"} declined your invitation` }); }
+      }
+      ackOf(ack)({ ok: true });
     });
     socket.on("party:leave", (_raw: unknown, ack?: Ack) => {
       const r = parties.leave(uid);

@@ -7,7 +7,7 @@ export const ROOM_SIZE = 4;
 const CORPSE_MS = 2500;
 const EMPTY_MS = 15_000;
 
-export interface FighterInfo { id: string; sprite: string; name: string; role: string; level: number; max: number; atk: number; magic: number; def: number; frac: number }
+export interface FighterInfo { id: string; sprite: string; name: string; role: string; level: number; xp: number; max: number; atk: number; magic: number; def: number; frac: number }
 export interface Member { uid: string; name: string; fighters: Map<string, Ally>; info: FighterInfo[]; buckets: Map<string, { tokens: number; at: number }>; dirty: boolean }
 
 /** What a room tells its members; the manager turns these into socket messages. */

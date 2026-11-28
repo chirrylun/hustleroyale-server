@@ -57,15 +57,17 @@ export class PartyManager {
   }
 
   /** Join a recruiting party. The level range and the password are checked here. */
-  join(me: PartyMember, id: string, password?: string): Result<{ party: Party }> {
+  join(me: PartyMember, id: string, password?: string, invited = false): Result<{ party: Party }> {
     if (this.of.has(me.uid)) return { ok: false, error: "in_party" };
     const p = this.parties.get(id);
     if (!p) return { ok: false, error: "no_such" };
-    if (!p.recruiting) return { ok: false, error: "closed" };
     if (p.members.length >= PARTY_MAX) return { ok: false, error: "full" };
-    if (me.level < p.min) return { ok: false, error: "level_low", min: p.min, max: p.max };
-    if (me.level > p.max) return { ok: false, error: "level_high", min: p.min, max: p.max };
-    if (!p.open && cleanPassword(password) !== p.password) return { ok: false, error: "wrong_password" };
+    if (!invited) { // an invitation from the host skips the request rules
+      if (!p.recruiting) return { ok: false, error: "closed" };
+      if (me.level < p.min) return { ok: false, error: "level_low", min: p.min, max: p.max };
+      if (me.level > p.max) return { ok: false, error: "level_high", min: p.min, max: p.max };
+      if (!p.open && cleanPassword(password) !== p.password) return { ok: false, error: "wrong_password" };
+    }
     p.members.push(me);
     this.of.set(me.uid, p.id);
     return { ok: true, party: p };
@@ -128,4 +130,36 @@ export function pickLootWinner(present: string[], damage: ReadonlyMap<string, nu
   let roll = rnd() * weights.reduce((a, b) => a + b, 0);
   for (let i = 0; i < present.length; i++) { roll -= weights[i]; if (roll < 0) return present[i]; }
   return present[present.length - 1];
+}
+
+export interface InviteInfo { from: string; name: string; level: number; classes: { archetype: string; level: number }[]; t: number }
+
+/** Party invitations waiting for an answer. They lapse after a minute. */
+export class InviteBook {
+  private book = new Map<string, Map<string, InviteInfo>>();
+  constructor(private ttlMs = 60_000) {}
+
+  add(to: string, info: InviteInfo) {
+    const m = this.book.get(to) ?? this.book.set(to, new Map()).get(to)!;
+    m.set(info.from, info);
+  }
+  /** Live invitations for a player, newest first. */
+  list(to: string, now = Date.now()): InviteInfo[] {
+    const m = this.book.get(to);
+    if (!m) return [];
+    for (const [k, v] of m) if (now - v.t > this.ttlMs) m.delete(k);
+    return [...m.values()].sort((a, b) => b.t - a.t);
+  }
+  /** Take (and remove) one invitation if it is still good. */
+  take(to: string, from: string, now = Date.now()): InviteInfo | null {
+    const hit = this.list(to, now).find((i) => i.from === from) ?? null;
+    if (hit) this.book.get(to)?.delete(from);
+    return hit;
+  }
+  /** Was this player invited by that one a moment ago? (To stop invite spam.) */
+  recent(to: string, from: string, withinMs: number, now = Date.now()): boolean {
+    const i = this.book.get(to)?.get(from);
+    return !!i && now - i.t < withinMs;
+  }
+  clear(to: string) { this.book.delete(to); }
 }

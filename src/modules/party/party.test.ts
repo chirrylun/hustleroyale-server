@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PartyManager, pickLootWinner, type PartyMember } from "./party.js";
+import { InviteBook, PartyManager, pickLootWinner, type PartyMember } from "./party.js";
 
 const m = (uid: string, level = 15): PartyMember => ({ uid, name: uid, level });
 const rules = { open: true, min: 10, max: 20 };
@@ -64,4 +64,24 @@ describe("loot winner", () => {
     expect(wins.c).toBeGreaterThan(300); // a member who did no damage still has a real chance
   });
   it("a lone member always wins", () => { expect(pickLootWinner(["x"], new Map())).toBe("x"); });
+});
+
+describe("invitations", () => {
+  const inv = (from: string, t = 0) => ({ from, name: from, level: 12, classes: [{ archetype: "fighter_tank", level: 12 }], t });
+  it("are answered once and lapse after a minute", () => {
+    const b = new InviteBook(60_000);
+    b.add("me", inv("a", 0));
+    expect(b.list("me", 1000)).toHaveLength(1);
+    expect(b.take("me", "a", 2000)?.from).toBe("a");
+    expect(b.take("me", "a", 2000)).toBeNull();
+    b.add("me", inv("b", 0));
+    expect(b.list("me", 61_000)).toHaveLength(0);
+  });
+  it("an invited player skips the level range and password but not a full party", () => {
+    const pm = new PartyManager();
+    const id = (pm.create(m("a"), { open: false, password: "pw", min: 50, max: 60 }) as { party: { id: string } }).party.id;
+    expect(pm.join(m("b", 5), id, undefined, true).ok).toBe(true);
+    pm.join(m("c"), id, undefined, true); pm.join(m("d"), id, undefined, true);
+    expect(pm.join(m("e"), id, undefined, true)).toMatchObject({ ok: false, error: "full" });
+  });
 });

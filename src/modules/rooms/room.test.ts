@@ -9,7 +9,7 @@ const events: { e: string; p: any }[] = [], kills: string[] = [];
 const out: RoomOut = { toRoom: (e, p) => events.push({ e, p }), toUser: () => {}, kill: (credit) => kills.push(...credit.keys()) };
 
 const member = (uid: string, x: number, y: number): Member => {
-  const info: FighterInfo[] = [{ id: `${uid}-f`, sprite: "x", name: "F", role: "dps", level: 3, max: 100, atk: 20, magic: 5, def: 5, frac: 1 }];
+  const info: FighterInfo[] = [{ id: `${uid}-f`, sprite: "x", name: "F", role: "dps", level: 3, xp: 0, max: 100, atk: 20, magic: 5, def: 5, frac: 1 }];
   return { uid, name: uid, info, buckets: new Map(), dirty: false, fighters: new Map([[`${uid}-f`, { id: `${uid}-f`, uid, x, y, max: 100, def: 5, frac: 1, dead: false }]]) };
 };
 

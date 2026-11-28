@@ -18,7 +18,7 @@ const updateSchema = z.object({
 });
 
 interface FighterRow {
-  id: string; level: number; hp: number; atk: number; def: number; magic: number; gender: string; hp_frac: number | null; gear?: GearRows;
+  id: string; level: number; xp: number; hp: number; atk: number; def: number; magic: number; gender: string; hp_frac: number | null; gear?: GearRows;
   template: { name: string; role: string; archetype: string; sprite_key: string } | null;
 }
 
@@ -50,6 +50,14 @@ export function registerRoomNamespace({ io, supabase, runs, parties, log }: Room
     if (error) { log.error({ err: error }, "room kill failed"); return; }
     const res = data as { throttled?: boolean } & Record<string, unknown>;
     if (!res.throttled && o.hurt) runs.paid(uid, claim);
+    // Everyone in the room can see a party member's experience bar move, so tell them what the fighters now have.
+    const awards = res.awards as { id: string; level: number; xp: number }[] | undefined;
+    const room = manager.roomOf(uid);
+    if (room && Array.isArray(awards) && awards.length) {
+      const mem = room.members.get(uid);
+      for (const a of awards) { const f = mem?.info.find((i) => i.id === a.id); if (f) { f.xp = a.xp; f.level = a.level; } }
+      ns.to(roomName(room.id)).emit("xp", { uid, f: awards.map((a) => [a.id, a.level, a.xp]) });
+    }
     ns.to(userName(uid)).emit("k", { m: mob.id, kind: mob.kind, boss: mob.boss, mini: mob.mini, ...res, party: o.share > 1 ? { n: o.share, loot: o.loot, winner: o.winner } : undefined });
   };
 
@@ -84,13 +92,13 @@ export function registerRoomNamespace({ io, supabase, runs, parties, log }: Room
 
   const loadMember = async (uid: string): Promise<Member | null> => {
     const [{ data: rows }, { data: prof }] = await Promise.all([
-      supabase.from("fighters").select("id, level, hp, atk, def, magic, gender, hp_frac, template:fighter_templates(name, role, archetype, sprite_key), " + GEAR_SELECT).eq("owner_id", uid).gt("team_slot", 0).order("team_slot"),
+      supabase.from("fighters").select("id, level, xp, hp, atk, def, magic, gender, hp_frac, template:fighter_templates(name, role, archetype, sprite_key), " + GEAR_SELECT).eq("owner_id", uid).gt("team_slot", 0).order("team_slot"),
       supabase.from("profiles").select("username").eq("id", uid).maybeSingle(),
     ]);
     const list = ((rows ?? []) as unknown as FighterRow[]).filter((r) => r.template);
     if (!list.length) return null;
     const info: FighterInfo[] = list.map((r) => { const gb = gearBonus(r.gear, r as never); return {
-      id: r.id, name: r.template!.name, role: r.template!.role, level: r.level, max: r.hp + gb.hp, atk: r.atk + gb.atk, magic: r.magic + gb.magic, def: r.def + gb.def, frac: r.hp_frac ?? 1,
+      id: r.id, name: r.template!.name, role: r.template!.role, level: r.level, xp: r.xp ?? 0, max: r.hp + gb.hp, atk: r.atk + gb.atk, magic: r.magic + gb.magic, def: r.def + gb.def, frac: r.hp_frac ?? 1,
       sprite: lookKey(r.gender, r.gear),
     }; });
     return {
