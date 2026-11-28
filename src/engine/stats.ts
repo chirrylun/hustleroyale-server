@@ -51,8 +51,11 @@ export function energyRegenPerSec(stamina: number): number {
  * A fighter's body is UNIT_RADIUS * 2 wide and the client draws it at that size, so what you
  * see is what collides. Skill ranges are measured from the edge of the body (see reachOf).
  */
-export const ARENA_W = 48;
-export const ARENA_H = 24;
+/** A hall one and a half times the old 48 x 24 field: room to run, kite and flank. The client scrolls a camera over it. */
+export const ARENA_W = 72;
+export const ARENA_H = 36;
+/** How much bigger the hall is than the original 48 x 24 field; lineups and cover scale with it. */
+export const ARENA_SCALE = ARENA_W / 48;
 export const UNIT_RADIUS = 1.2;
 
 /** Centre-to-centre distance at which a skill with this range can hit. 0 stays "no limit". */

@@ -3,6 +3,7 @@ import { clampToArena, currentRing, pushOutOfObstacles, runCommander, stepMoveme
 import { createRng } from "./rng.js";
 import {
   ARENA_H,
+  ARENA_SCALE,
   ARENA_W,
   CAST_LOCK_BASIC_MS,
   CAST_LOCK_SPECIAL_MS,
@@ -49,11 +50,11 @@ export const DEFAULT_MAX_DURATION_MS = HARD_CAP_MS;
 const INTENT_TTL_MS = 3000; // long enough for the unit to walk into range
 
 /** How far from its own edge each role starts: tanks up front, healers at the back. */
-const START_X: Record<Role, number> = { tank: 9, dps: 6.5, healer: 4 };
+const START_X: Record<Role, number> = { tank: 9 * ARENA_SCALE, dps: 6.5 * ARENA_SCALE, healer: 4 * ARENA_SCALE };
 
 /**
  * Arena layouts. Every one is mirror-symmetric left to right, exactly like the starting lineups,
- * so cover never favours a side. They are in arena units for the default 48 x 24 arena.
+ * so cover never favours a side. They are written for the original 48 x 24 field and scaled to the hall by ARENA_SCALE.
  */
 const LAYOUTS: { name: string; obstacles: Omit<Obstacle, "id">[] }[] = [
   {
@@ -113,7 +114,8 @@ export function createBattle(init: UnitInit[], seed: number, opts: BattleOptions
   const rng = createRng(seed);
   // Open arena by default (no cover). Pass `layout` to bring obstacles back.
   const layoutIndex = opts.layout ?? -1;
-  const layout = layoutIndex >= 0 ? LAYOUTS[layoutIndex % LAYOUTS.length] : undefined;
+  const base = layoutIndex >= 0 ? LAYOUTS[layoutIndex % LAYOUTS.length] : undefined;
+  const layout = base && { ...base, obstacles: base.obstacles.map((o) => ({ ...o, x: o.x * ARENA_SCALE, y: o.y * ARENA_SCALE })) };
   const withMinions = [...init, ...init.filter((u) => u.skills.some((s) => s.effect.summon)).map(minionInit)];
   const units: Unit[] = withMinions.map((u) => {
     const energyCap = maxEnergy(u.stats.stamina);
