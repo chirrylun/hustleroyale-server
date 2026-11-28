@@ -152,7 +152,7 @@ export function registerChatNamespace({ io, supabase, rooms, parties, log }: Cha
 
     socket.on("party:sync", async (_raw: unknown, ack?: Ack) => {
       const p = parties.partyOf(uid);
-      ackOf(ack)({ party: p ? view(p, uid) : null, nearby: await nearby(uid), level: await levelOf(uid) });
+      ackOf(ack)({ uid, party: p ? view(p, uid) : null, nearby: await nearby(uid), level: await levelOf(uid) });
     });
     socket.on("party:create", async (raw: unknown, ack?: Ack) => {
       const reply = ackOf(ack), body = optionsSchema.safeParse(raw);
